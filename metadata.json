@@ -1,0 +1,6 @@
+{
+  "name": "Orbital Telemetry & Critical Response",
+  "description": "Operational flight-deck HUD and physiological survival telemetry interface for extravehicular and station-board operations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

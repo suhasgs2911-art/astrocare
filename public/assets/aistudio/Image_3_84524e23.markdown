@@ -1,0 +1,193 @@
+---
+name: Orbital Telemetry & Critical Response
+colors:
+  surface: '#0d1323'
+  surface-dim: '#0d1323'
+  surface-bright: '#33394b'
+  surface-container-lowest: '#080e1e'
+  surface-container-low: '#151b2c'
+  surface-container: '#191f30'
+  surface-container-high: '#242a3b'
+  surface-container-highest: '#2e3446'
+  on-surface: '#dce2f9'
+  on-surface-variant: '#b9cacb'
+  inverse-surface: '#dce2f9'
+  inverse-on-surface: '#2a3041'
+  outline: '#849495'
+  outline-variant: '#3b494b'
+  surface-tint: '#00dbe9'
+  primary: '#dbfcff'
+  on-primary: '#00363a'
+  primary-container: '#00f0ff'
+  on-primary-container: '#006970'
+  inverse-primary: '#006970'
+  secondary: '#ebffe6'
+  on-secondary: '#003911'
+  secondary-container: '#00fe66'
+  on-secondary-container: '#007128'
+  tertiary: '#fff4e8'
+  on-tertiary: '#422c00'
+  tertiary-container: '#ffd388'
+  on-tertiary-container: '#7d5800'
+  error: '#ffb4ab'
+  on-error: '#690005'
+  error-container: '#93000a'
+  on-error-container: '#ffdad6'
+  primary-fixed: '#7df4ff'
+  primary-fixed-dim: '#00dbe9'
+  on-primary-fixed: '#002022'
+  on-primary-fixed-variant: '#004f54'
+  secondary-fixed: '#6bff83'
+  secondary-fixed-dim: '#00e55b'
+  on-secondary-fixed: '#002107'
+  on-secondary-fixed-variant: '#00531b'
+  tertiary-fixed: '#ffdea9'
+  tertiary-fixed-dim: '#ffba27'
+  on-tertiary-fixed: '#271900'
+  on-tertiary-fixed-variant: '#5e4100'
+  background: '#0d1323'
+  on-background: '#dce2f9'
+  surface-variant: '#2e3446'
+typography:
+  headline-lg:
+    fontFamily: Space Grotesk
+    fontSize: 32px
+    fontWeight: '700'
+    lineHeight: 38px
+  headline-lg-mobile:
+    fontFamily: Space Grotesk
+    fontSize: 26px
+    fontWeight: '700'
+    lineHeight: 32px
+  headline-md:
+    fontFamily: Space Grotesk
+    fontSize: 22px
+    fontWeight: '600'
+    lineHeight: 28px
+  headline-sm:
+    fontFamily: Space Grotesk
+    fontSize: 18px
+    fontWeight: '600'
+    lineHeight: 24px
+  body-lg:
+    fontFamily: Inter
+    fontSize: 16px
+    fontWeight: '400'
+    lineHeight: 24px
+  body-md:
+    fontFamily: Inter
+    fontSize: 14px
+    fontWeight: '400'
+    lineHeight: 20px
+  body-sm:
+    fontFamily: Inter
+    fontSize: 12px
+    fontWeight: '400'
+    lineHeight: 16px
+  label-lg:
+    fontFamily: JetBrains Mono
+    fontSize: 14px
+    fontWeight: '600'
+    lineHeight: 18px
+  label-md:
+    fontFamily: JetBrains Mono
+    fontSize: 12px
+    fontWeight: '500'
+    lineHeight: 16px
+  label-sm:
+    fontFamily: JetBrains Mono
+    fontSize: 10px
+    fontWeight: '500'
+    lineHeight: 14px
+rounded:
+  sm: 0.125rem
+  DEFAULT: 0.25rem
+  md: 0.375rem
+  lg: 0.5rem
+  xl: 0.75rem
+  full: 9999px
+spacing:
+  gutter: 0.75rem
+  gutter-desktop: 1.25rem
+  margin: 1rem
+  margin-desktop: 2rem
+  space-xs: 0.25rem
+  space-sm: 0.5rem
+  space-md: 0.75rem
+  space-lg: 1rem
+  space-xl: 1.5rem
+---
+
+## Brand & Style
+This design system defines an operational flight-deck interface engineered for extravehicular and station-board physiological survival. The aesthetic merges NASA flight-director rigor with a contemporary mobile-first heads-up display (HUD). 
+
+### Visual Tenets
+- **Mission Critical Precision:** Zero ornamental clutter. Every pixel, line width, and token communicates urgency, status, or structural boundary.
+- **Deep Space HUD:** Deep space obsidian containers suspended with low-attenuation cyan borders, high-contrast luminous data clusters, and dedicated alert lanes.
+- **Tactile Emergency Ergonomics:** Heavy touch targets configured for gloved, microgravity, or high-vibration interactions; rapid scan patterns prioritization for life-support vitals (SpO2, heart rate variability, radiation flux, core temp).
+- **Data Provenance Integrity:** Absolute visual separation between validated historical archive feeds and live simulated contingency runs.
+
+## Colors
+The palette is calibrated strictly for high-contrast OLED legibility in low-light orbital habitats and direct-sun visor glare.
+
+- **Primary (`#00F0FF`):** Flight vector cyan. Used for vital borders, interactive state rings, primary control highlights, and active telemetry channels.
+- **Secondary (`#00FF66`):** Nominal telemetry green. Denotes stable biometric states, pressurized life support, and verified telemetry locks.
+- **Tertiary (`#FFB703`):** Advisory amber. Communicates drift, sensor degradation, and non-critical physiological alerts.
+- **Critical Alert (`#FF2A55`):** Mission critical red. Reserved exclusively for hypoxic warnings, rapid cabin decompression, tachycardia/arrhythmia, and manual abort triggers.
+- **Void Bases (`#030712`, `#070D1D`, `#0B132B`):** Multi-tiered spatial canvas structure. Deep obsidian provides limitless infinite contrast, while midnight sub-layers separate secondary cards and status arrays.
+- **Data Readout Neutrals (`#F8FAFC`, `#94A3B8`, `#475569`):** Pure optical white for real-time numeric readouts; muted slate for engineering metrics, labels, and coordinate timestamps.
+
+## Typography
+Typography is separated strictly into narrative, architectural headings, and monospaced telemetry readouts.
+
+- **Headlines (Space Grotesk):** Provides an authoritative aerospace identity. Headlines must maintain uppercase tracking on status labels and module identifiers.
+- **Body (Inter):** Maximizes readability for clinical observations, medical protocol procedures, and event log descriptions.
+- **Labels, Telemetry, and Identifiers (JetBrains Mono):** Monospaced numeric tables ensure zero horizontal jitter during continuous real-time data streaming (e.g., heart rates, partial pressure graphs, crew IDs).
+
+## Layout & Spacing
+The layout adheres to a strict 4-column dynamic grid on mobile devices, transitioning to an 8-column layout on telemetry tablets and a 12-column layout on mission-control desktop viewports.
+
+- **Mobile Viewport Optimization:** Margins are set to `1rem` to maximize actionable surface area on small displays. Key biometric cards use tight internal `space-md` gaps to retain maximum data density above the fold.
+- **Vertical Rhythm:** Monospaced data groups employ compact `space-xs` and `space-sm` increments to keep related indicators (e.g., label, value, unit) grouped into clear scan units.
+- **Reflow & Safety Insets:** Primary controls, contingency triggers, and critical acknowledge banners are anchored within standard thumb zones and respect device safe areas with `space-lg` bottom padding.
+
+## Elevation & Depth
+Elevation is achieved using translucent glassmorphism paired with luminous boundary radiance rather than drop shadows.
+
+- **Void Surface Base:** Background sits at `#030712`.
+- **Card Tier 1 (Telemetry Panels):** Surface `#070D1D` with 80% opacity and an active `backdrop-filter: blur(12px)`. Outlined with a 1px solid border of `#00F0FF` at 18% opacity.
+- **Card Tier 2 (Selected / Active HUD):** Surface `#0B132B` at 90% opacity, bordered by 1px solid `#00F0FF` with a cyan outer glow: `box-shadow: 0 0 12px rgba(0, 240, 255, 0.25)`.
+- **Critical Emergency Tier:** Surface `#18040A` at 95% opacity, flanked by a 1.5px solid border of `#FF2A55` and a dynamic perimeter beacon: `box-shadow: 0 0 20px rgba(255, 42, 85, 0.40)`.
+
+## Shapes
+Geometry leans technical, industrial, and compact. 
+
+- **Corner Radii:** Set to soft angularity (`roundedness: 1`), keeping standard modules at `0.25rem` (4px) to retain an instrumental instrument-panel feel.
+- **Card Containers:** Standardize at `0.5rem` (`rounded-lg`) to balance structural rigour with thumb-friendly tactility.
+- **Status Badges & Pills:** Retain clipped capsule contours (`rounded-full`) to immediately contrast with rectangular data monitors.
+
+## Components
+
+### 1. Control Buttons
+- **Primary Flight Action:** Solid `#00F0FF` fill with `#030712` bold typography. Height: 48px minimum. Soft 4px outer edge. Active state provides an inward micro-glow.
+- **Critical Abort / Contingency:** Solid `#FF2A55` background, high-contrast white monospaced text, reinforced with diagonal hazard striping accents on the container edge.
+- **Sub-System Ghost:** Transparent background with a 1px `#38BDF8` border at 40% opacity, transitioning to 100% opacity on press.
+
+### 2. Telemetry Cards
+- Encased in glassmorphic midnight panels (`#070D1D` at 80% with cyan wire border).
+- Structured in three vertical zones: Micro Header (parameter name + status dot), Value Anchor (large monospaced numerical readout + engineering unit), and Sparkline/Min-Max trajectory bounds.
+
+### 3. Data Provenance Badges
+- **NASA OSDR Archive:** Crisp background tint (`rgba(0, 240, 255, 0.12)`), text `#00F0FF`, border 1px solid `#00F0FF`, uppercase monospaced text prefixed with a geometric archival node glyph `[OSDR-FLT]`.
+- **SIMULATED / DEMO:** Crisp warning background (`rgba(255, 183, 3, 0.12)`), text `#FFB703`, border 1px dashed `#FFB703`, uppercase label `[SIM-RUN]`.
+
+### 4. Status Indicator Pills
+- **Nominal:** 6px solid `#00FF66` beacon with `0 0 6px #00FF66` radial glow, accompanying `#00FF66` text over `#022413`.
+- **Advisory:** Pulsing `#FFB703` indicator over `#261A02`.
+- **Emergency:** Rapid flashing `#FF2A55` indicator over `#2B050E`.
+
+### 5. Input Fields & Selectors
+- Technical input surfaces utilizing `#070D1D` base, 1px `#475569` border, and cyan focus state (`#00F0FF`). Monospaced text input with uppercase baseline assistance.
+
+### 6. Emergency Mission Banner
+- Full-bleed sticky alert strip positioned at top/bottom of screen. Background `#FF2A55`, black text (`#030712`), prominent audio-mute toggle, countdown clearance timer, and tactile 'ACKNOWLEDGE' swipe slider.

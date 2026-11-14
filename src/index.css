@@ -1,0 +1,111 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --color-void-base: #030712;
+  --color-surface-low: #070d1d;
+  --color-surface-active: #0b132b;
+  --color-surface-critical: #18040a;
+  --color-cyan-vector: #00f0ff;
+  --color-green-nominal: #00ff66;
+  --color-amber-advisory: #ffb703;
+  --color-red-critical: #ff2a55;
+  --color-readout-white: #f8fafc;
+  --color-readout-slate: #94a3b8;
+  --color-readout-muted: #475569;
+}
+
+@layer base {
+  html,
+  body {
+    background-color: #030712;
+    color: #dce2f9;
+    font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  }
+
+  h1,
+  h2,
+  h3,
+  .font-display {
+    font-family: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  }
+
+  .font-mono {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* HUD Glassmorphic Tiers from Orbital Telemetry & Critical Response Design System */
+.hud-panel-tier1 {
+  background-color: rgba(7, 13, 29, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(0, 240, 255, 0.18);
+}
+
+.hud-panel-tier2 {
+  background-color: rgba(11, 19, 43, 0.9);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid #00f0ff;
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.25);
+}
+
+.hud-panel-critical {
+  background-color: rgba(24, 4, 10, 0.95);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1.5px solid #ff2a55;
+  box-shadow: 0 0 20px rgba(255, 42, 85, 0.4);
+}
+
+.hud-panel-advisory {
+  background-color: rgba(38, 26, 2, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 183, 3, 0.6);
+  box-shadow: 0 0 14px rgba(255, 183, 3, 0.18);
+}
+
+/* Subtle coordinate grid backdrop */
+.hud-grid-bg {
+  background-image:
+    linear-gradient(to right, rgba(0, 240, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 240, 255, 0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* Diagonal hazard striping for critical abort / contingency edges */
+.hazard-stripes {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(3, 7, 18, 0.25),
+    rgba(3, 7, 18, 0.25) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+}
+
+.hazard-edge-left {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    #ff2a55,
+    #ff2a55 5px,
+    #030712 5px,
+    #030712 10px
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
