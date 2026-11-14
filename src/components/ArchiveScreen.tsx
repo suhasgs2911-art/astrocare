@@ -8,12 +8,22 @@ import {
 } from '../types/telemetry';
 import { ProvenanceBadge, StatusPill } from './ProvenanceAndStatus';
 
+export interface OperatorAuditRecord {
+  id: string;
+  callsign: string;
+  actionType: string;
+  targetRef: string;
+  metFormatted: string;
+  summary: string;
+}
+
 interface ArchiveScreenProps {
   datasets: OsdrDatasetRecord[];
   logs: TelemetryLogEntry[];
   onExportCsv: () => void;
   activeDatasetId: string;
   onSelectDataset: (accessionId: string) => void;
+  operatorActions?: OperatorAuditRecord[];
 }
 
 export function ArchiveScreen({
@@ -22,6 +32,7 @@ export function ArchiveScreen({
   onExportCsv,
   activeDatasetId,
   onSelectDataset,
+  operatorActions = [],
 }: ArchiveScreenProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [provenanceFilter, setProvenanceFilter] = useState<'ALL' | ProvenanceMode>('ALL');
@@ -65,6 +76,7 @@ export function ArchiveScreen({
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {datasets.map((ds) => {
             const isSelected = ds.accessionId === activeDatasetId;
+            const isUploadedReport = ds.accessionId.startsWith('RPT-');
             return (
               <button
                 key={ds.accessionId}
@@ -78,7 +90,7 @@ export function ArchiveScreen({
                   <div className="flex items-center justify-between gap-2">
                     <ProvenanceBadge mode="OSDR-FLT" datasetRef={ds.accessionId} />
                     <span className="font-mono text-[11px] text-[#94A3B8] tabular-nums">
-                      n={ds.cohortSize} · {ds.durationHours}h
+                      {isUploadedReport ? 'UPLOADED REPORT' : `n=${ds.cohortSize} · ${ds.durationHours}h`}
                     </span>
                   </div>
                   <h2 className="font-display text-base font-bold text-[#F8FAFC]">
@@ -217,6 +229,62 @@ export function ArchiveScreen({
             </tbody>
           </table>
         </div>
+      </section>
+
+      {/* Persisted Firestore Operator Command Audit */}
+      <section className="hud-panel-tier1 rounded-lg p-4 sm:p-5 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#00F0FF]/15 pb-3">
+          <div>
+            <h2 className="font-display text-lg font-semibold text-[#F8FAFC]">
+              Operator Command Audit Trail
+            </h2>
+            <p className="font-mono text-xs text-[#94A3B8]">
+              Authenticated actions persisted to Firestore across mission sessions.
+            </p>
+          </div>
+          <span className="font-mono text-xs text-[#00F0FF] tabular-nums">
+            {operatorActions.length} RECORDS
+          </span>
+        </div>
+
+        {operatorActions.length === 0 ? (
+          <p className="py-4 text-center font-mono text-xs text-[#94A3B8]">
+            No operator commands recorded in this account yet. Trigger a contingency, seal a hatch, or verify a checklist step to log an entry.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-[#00F0FF]/20 font-mono text-[11px] uppercase text-[#94A3B8]">
+                  <th className="py-2 pr-4">MET</th>
+                  <th className="py-2 pr-4">Callsign</th>
+                  <th className="py-2 pr-4">Action</th>
+                  <th className="py-2 pr-4">Target</th>
+                  <th className="py-2">Summary</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#00F0FF]/10 text-xs">
+                {operatorActions.map((act) => (
+                  <tr key={act.id} className="hover:bg-[#0B132B]/50">
+                    <td className="py-2.5 pr-4 font-mono text-[#F8FAFC] whitespace-nowrap tabular-nums">
+                      {act.metFormatted}
+                    </td>
+                    <td className="py-2.5 pr-4 font-mono font-semibold text-[#00F0FF] whitespace-nowrap">
+                      {act.callsign}
+                    </td>
+                    <td className="py-2.5 pr-4 font-mono text-[#00FF66] whitespace-nowrap">
+                      {act.actionType}
+                    </td>
+                    <td className="py-2.5 pr-4 font-mono text-[#dce2f9] whitespace-nowrap">
+                      {act.targetRef}
+                    </td>
+                    <td className="py-2.5 text-[#dce2f9]">{act.summary}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
     </div>
   );

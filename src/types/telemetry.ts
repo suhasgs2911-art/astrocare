@@ -1,4 +1,25 @@
-export type ScreenId = 'flight-deck' | 'orbital-matrix' | 'contingency' | 'archive';
+export type ScreenId = 'flight-deck' | 'orbital-matrix' | 'contingency' | 'archive' | 'med-records';
+
+export type MedicalRecordCategory = 'MEDICAL_STATS' | 'CERTIFICATE';
+
+export type ClearanceStatus = 'CLEARED_EVA' | 'HAB_ONLY' | 'REVIEW_REQUIRED';
+
+export interface MedicalRecordItem {
+  id: string;
+  ownerUid: string;
+  crewCallsign: string;
+  recordCategory: MedicalRecordCategory;
+  fileName: string;
+  mimeType: string;
+  fileSizeBytes: number;
+  serverFileId: string;
+  issuer: string;
+  clearanceStatus: ClearanceStatus;
+  parsedSummary: string;
+  baselineSpo2: number;
+  baselineHr: number;
+  createdAtLabel: string;
+}
 
 export type ProvenanceMode = 'OSDR-FLT' | 'SIM-RUN';
 
@@ -37,6 +58,13 @@ export interface CrewMember {
   o2ReservePct: number;
   batteryPct: number;
   status: TelemetrySeverity;
+  medicalReport?: {
+    fileName: string;
+    issuer: string;
+    clearanceStatus: ClearanceStatus;
+    category: MedicalRecordCategory;
+    summary: string;
+  };
   vitals: {
     spo2: VitalMetric;
     heartRate: VitalMetric;

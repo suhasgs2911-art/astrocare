@@ -1,0 +1,215 @@
+{
+  "entities": {
+    "OperatorPublicProfile": {
+      "title": "OperatorPublicProfile",
+      "description": "Public flight-deck operator callsign and station role, isolated from PII.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "callsign": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 24,
+          "pattern": "^[A-Z0-9\\-]+$"
+        },
+        "roleTitle": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 64
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "displayName", "callsign", "roleTitle", "updatedAt"]
+    },
+    "OperatorPrivateInfo": {
+      "title": "OperatorPrivateInfo",
+      "description": "Restricted operator PII record containing verified email and clearance timestamp.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "clearedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "clearedAt"]
+    },
+    "TelemetryActionLog": {
+      "title": "TelemetryActionLog",
+      "description": "Persistent operator flight-deck command and contingency action audit record.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "callsign": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 24
+        },
+        "actionType": {
+          "type": "string",
+          "enum": ["SCENARIO", "ALERT_ACK", "BULKHEAD", "PROTOCOL_STEP", "PROVENANCE"]
+        },
+        "targetRef": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "metFormatted": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 24
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "ownerUid", "callsign", "actionType", "targetRef", "metFormatted", "summary", "createdAt"]
+    },
+    "MedicalRecord": {
+      "title": "MedicalRecord",
+      "description": "Uploaded previous physiological medical stats summary or flight medical clearance certificate metadata.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "crewCallsign": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 24,
+          "pattern": "^[A-Z0-9\\-]+$"
+        },
+        "recordCategory": {
+          "type": "string",
+          "enum": ["MEDICAL_STATS", "CERTIFICATE"]
+        },
+        "fileName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "mimeType": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 100
+        },
+        "fileSizeBytes": {
+          "type": "number"
+        },
+        "serverFileId": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 128
+        },
+        "issuer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "clearanceStatus": {
+          "type": "string",
+          "enum": ["CLEARED_EVA", "HAB_ONLY", "REVIEW_REQUIRED"]
+        },
+        "parsedSummary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400
+        },
+        "baselineSpo2": {
+          "type": "number"
+        },
+        "baselineHr": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "ownerUid",
+        "crewCallsign",
+        "recordCategory",
+        "fileName",
+        "mimeType",
+        "fileSizeBytes",
+        "serverFileId",
+        "issuer",
+        "clearanceStatus",
+        "parsedSummary",
+        "baselineSpo2",
+        "baselineHr",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/public/profile": {
+      "schema": { "$ref": "#/entities/OperatorPublicProfile" },
+      "description": "Non-PII flight-deck operator profile document."
+    },
+    "/users/{userId}/private/info": {
+      "schema": { "$ref": "#/entities/OperatorPrivateInfo" },
+      "description": "Owner-only PII record storing verified email."
+    },
+    "/users/{userId}/telemetryActions/{actionId}": {
+      "schema": { "$ref": "#/entities/TelemetryActionLog" },
+      "description": "Operator-scoped persistent telemetry command audit log."
+    },
+    "/users/{userId}/medicalRecords/{recordId}": {
+      "schema": { "$ref": "#/entities/MedicalRecord" },
+      "description": "Operator-uploaded previous medical stats summaries and flight clearance certificate records."
+    }
+  }
+}

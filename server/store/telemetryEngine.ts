@@ -9,7 +9,27 @@ import type {
   TelemetrySeverity,
   TelemetrySnapshot,
   VitalKey,
+  VitalMetric,
 } from '../types.ts';
+
+export interface MedicalCalibrationInput {
+  crewCallsign: string;
+  subjectName?: string;
+  subjectRole?: string;
+  fileName: string;
+  issuer?: string;
+  recordCategory?: 'MEDICAL_STATS' | 'CERTIFICATE';
+  clearanceStatus: 'CLEARED_EVA' | 'HAB_ONLY' | 'REVIEW_REQUIRED';
+  baselineSpo2: number;
+  baselineHr: number;
+  baselineCoreTemp?: number;
+  baselineRadFlux?: number;
+  baselineHrv?: number;
+  baselineSuitPressure?: number;
+  baselinePpCO2?: number;
+  baselineO2Reserve?: number;
+  parsedSummary?: string;
+}
 
 function formatMet(totalSeconds: number): string {
   const hrs = Math.floor(totalSeconds / 3600);
@@ -25,7 +45,11 @@ function formatUtcNow(): string {
   ).padStart(2, '0')} UTC`;
 }
 
-function evaluateVitalSeverity(key: VitalKey, val: number, crewId: string): TelemetrySeverity {
+function evaluateVitalSeverity(
+  key: VitalKey,
+  val: number,
+  isHabMode: boolean
+): TelemetrySeverity {
   if (key === 'spo2') {
     if (val < 92.0) return 'critical';
     if (val < 95.0) return 'advisory';
@@ -52,7 +76,7 @@ function evaluateVitalSeverity(key: VitalKey, val: number, crewId: string): Tele
     return 'nominal';
   }
   if (key === 'suitPressure') {
-    if (crewId === 'hab-03') {
+    if (isHabMode) {
       if (val < 92.0) return 'critical';
       if (val < 97.0) return 'advisory';
       return 'nominal';
@@ -69,365 +93,209 @@ function evaluateVitalSeverity(key: VitalKey, val: number, crewId: string): Tele
   return 'nominal';
 }
 
-const INITIAL_CREW: CrewMember[] = [
-  {
-    id: 'eva-01',
-    callsign: 'EVA-01',
-    name: 'Elena Vance',
-    role: 'Flight Commander',
-    stationLocation: 'Quest Airlock Exterior',
-    suitId: 'EMU-409',
-    evaElapsedSec: 15129,
-    o2ReservePct: 78.4,
-    batteryPct: 84.0,
-    status: 'nominal',
-    vitals: {
-      spo2: {
-        id: 'spo2',
-        label: 'Arterial Oxygen Saturation (SpO2)',
-        shortLabel: 'SpO2',
-        value: 98.4,
-        unit: '%',
-        decimals: 1,
-        minBound: 94.0,
-        maxBound: 100.0,
-        baselineValue: 98.5,
-        severity: 'nominal',
-        deltaPerMin: 0.0,
-        history: [98.6, 98.5, 98.7, 98.4, 98.3, 98.5, 98.4, 98.6, 98.5, 98.4, 98.3, 98.4],
-        osdrBaselineHistory: [98.5, 98.5, 98.6, 98.5, 98.4, 98.5, 98.6, 98.5, 98.5, 98.4, 98.5, 98.5],
-      },
-      heartRate: {
-        id: 'heartRate',
-        label: 'Cardiac Rate',
-        shortLabel: 'HEART RATE',
-        value: 74,
-        unit: 'BPM',
-        decimals: 0,
-        minBound: 50,
-        maxBound: 135,
-        baselineValue: 72,
-        severity: 'nominal',
-        deltaPerMin: 0.5,
-        history: [71, 72, 74, 73, 75, 76, 74, 73, 72, 74, 75, 74],
-        osdrBaselineHistory: [70, 71, 72, 72, 71, 72, 73, 72, 71, 72, 72, 72],
-      },
-      hrv: {
-        id: 'hrv',
-        label: 'Heart Rate Variability (RMSSD)',
-        shortLabel: 'HRV RMSSD',
-        value: 46.2,
-        unit: 'ms',
-        decimals: 1,
-        minBound: 22.0,
-        maxBound: 85.0,
-        baselineValue: 48.0,
-        severity: 'nominal',
-        deltaPerMin: -0.2,
-        history: [48.1, 47.5, 46.9, 47.2, 46.4, 45.8, 46.1, 46.7, 46.3, 46.0, 46.5, 46.2],
-        osdrBaselineHistory: [48.0, 48.2, 47.9, 48.1, 48.0, 47.8, 48.1, 48.0, 47.9, 48.1, 48.0, 48.0],
-      },
-      radiationFlux: {
-        id: 'radiationFlux',
-        label: 'Dosimetry Radiation Flux',
-        shortLabel: 'RAD FLUX',
-        value: 0.42,
-        unit: 'mSv/h',
-        decimals: 2,
-        minBound: 0.0,
-        maxBound: 2.5,
-        baselineValue: 0.39,
-        severity: 'nominal',
-        deltaPerMin: 0.01,
-        history: [0.38, 0.39, 0.4, 0.41, 0.39, 0.41, 0.42, 0.43, 0.41, 0.42, 0.42, 0.42],
-        osdrBaselineHistory: [0.38, 0.38, 0.39, 0.39, 0.4, 0.39, 0.39, 0.38, 0.39, 0.39, 0.39, 0.39],
-      },
-      coreTemp: {
-        id: 'coreTemp',
-        label: 'Core Body Temperature',
-        shortLabel: 'CORE TEMP',
-        value: 37.1,
-        unit: '°C',
-        decimals: 1,
-        minBound: 35.8,
-        maxBound: 38.4,
-        baselineValue: 37.0,
-        severity: 'nominal',
-        deltaPerMin: 0.0,
-        history: [37.0, 37.0, 37.1, 37.1, 37.1, 37.2, 37.1, 37.1, 37.1, 37.1, 37.1, 37.1],
-        osdrBaselineHistory: [37.0, 37.0, 37.0, 37.0, 37.0, 37.1, 37.0, 37.0, 37.0, 37.0, 37.0, 37.0],
-      },
-      suitPressure: {
-        id: 'suitPressure',
-        label: 'EMU Suit Loop Pressure',
-        shortLabel: 'SUIT PRESS',
-        value: 29.6,
-        unit: 'kPa',
-        decimals: 1,
-        minBound: 26.5,
-        maxBound: 31.5,
-        baselineValue: 29.6,
-        severity: 'nominal',
-        deltaPerMin: 0.0,
-        history: [29.6, 29.6, 29.7, 29.6, 29.6, 29.5, 29.6, 29.6, 29.6, 29.7, 29.6, 29.6],
-        osdrBaselineHistory: [29.6, 29.6, 29.6, 29.6, 29.6, 29.6, 29.6, 29.6, 29.6, 29.6, 29.6, 29.6],
-      },
-      ppCO2: {
-        id: 'ppCO2',
-        label: 'Inspired Partial Pressure CO2',
-        shortLabel: 'ppCO2',
-        value: 0.34,
-        unit: 'kPa',
-        decimals: 2,
-        minBound: 0.0,
-        maxBound: 0.85,
-        baselineValue: 0.32,
-        severity: 'nominal',
-        deltaPerMin: 0.0,
-        history: [0.31, 0.32, 0.33, 0.32, 0.33, 0.34, 0.34, 0.33, 0.34, 0.35, 0.34, 0.34],
-        osdrBaselineHistory: [0.31, 0.32, 0.32, 0.32, 0.32, 0.32, 0.32, 0.33, 0.32, 0.32, 0.32, 0.32],
-      },
+function createVitalMetric(params: {
+  id: VitalKey;
+  label: string;
+  shortLabel: string;
+  value: number;
+  unit: string;
+  decimals: number;
+  minBound: number;
+  maxBound: number;
+  isHabMode: boolean;
+}): VitalMetric {
+  const factor = Math.pow(10, params.decimals);
+  const rounded = Math.round(params.value * factor) / factor;
+  const severity = evaluateVitalSeverity(params.id, rounded, params.isHabMode);
+  const history = Array.from({ length: 12 }, (_, idx) => {
+    const wave = idx === 11 ? 0 : Math.sin(idx * 0.7) * (params.decimals === 0 ? 1 : 0.08);
+    return Math.round((rounded + wave) * factor) / factor;
+  });
+
+  return {
+    id: params.id,
+    label: params.label,
+    shortLabel: params.shortLabel,
+    value: rounded,
+    unit: params.unit,
+    decimals: params.decimals,
+    minBound: params.minBound,
+    maxBound: params.maxBound,
+    baselineValue: rounded,
+    severity,
+    deltaPerMin: 0.0,
+    history,
+    osdrBaselineHistory: Array.from({ length: 12 }, () => rounded),
+  };
+}
+
+function buildCrewMemberFromMedical(input: MedicalCalibrationInput): CrewMember {
+  const callsign = input.crewCallsign.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 24) || 'SUBJ-01';
+  const id = `subj-${callsign.toLowerCase()}`;
+  const isHabMode = input.clearanceStatus !== 'CLEARED_EVA';
+
+  const spo2 = Math.min(100, Math.max(70, Number(input.baselineSpo2) || 98.4));
+  const hr = Math.min(220, Math.max(35, Math.round(Number(input.baselineHr) || 72)));
+  const coreTemp =
+    typeof input.baselineCoreTemp === 'number' &&
+    input.baselineCoreTemp >= 33 &&
+    input.baselineCoreTemp <= 42
+      ? input.baselineCoreTemp
+      : 37.0;
+  const radFlux =
+    typeof input.baselineRadFlux === 'number' &&
+    input.baselineRadFlux >= 0 &&
+    input.baselineRadFlux <= 10
+      ? input.baselineRadFlux
+      : isHabMode
+      ? 0.21
+      : 0.38;
+  const hrv =
+    typeof input.baselineHrv === 'number' &&
+    input.baselineHrv >= 5 &&
+    input.baselineHrv <= 150
+      ? input.baselineHrv
+      : 48.0;
+  const suitPressure =
+    typeof input.baselineSuitPressure === 'number' &&
+    input.baselineSuitPressure >= 15 &&
+    input.baselineSuitPressure <= 110
+      ? input.baselineSuitPressure
+      : isHabMode
+      ? 101.3
+      : 29.6;
+  const ppCO2 =
+    typeof input.baselinePpCO2 === 'number' &&
+    input.baselinePpCO2 >= 0 &&
+    input.baselinePpCO2 <= 3
+      ? input.baselinePpCO2
+      : isHabMode
+      ? 0.28
+      : 0.34;
+  const o2Reserve =
+    typeof input.baselineO2Reserve === 'number' &&
+    input.baselineO2Reserve >= 5 &&
+    input.baselineO2Reserve <= 100
+      ? input.baselineO2Reserve
+      : isHabMode
+      ? 96.0
+      : 82.0;
+
+  const vitals: CrewMember['vitals'] = {
+    spo2: createVitalMetric({
+      id: 'spo2',
+      label: 'Arterial Oxygen Saturation (SpO2)',
+      shortLabel: 'SpO2',
+      value: spo2,
+      unit: '%',
+      decimals: 1,
+      minBound: 94.0,
+      maxBound: 100.0,
+      isHabMode,
+    }),
+    heartRate: createVitalMetric({
+      id: 'heartRate',
+      label: 'Cardiac Rate',
+      shortLabel: 'HEART RATE',
+      value: hr,
+      unit: 'BPM',
+      decimals: 0,
+      minBound: 50,
+      maxBound: 135,
+      isHabMode,
+    }),
+    hrv: createVitalMetric({
+      id: 'hrv',
+      label: 'Heart Rate Variability (RMSSD)',
+      shortLabel: 'HRV RMSSD',
+      value: hrv,
+      unit: 'ms',
+      decimals: 1,
+      minBound: 22.0,
+      maxBound: 85.0,
+      isHabMode,
+    }),
+    radiationFlux: createVitalMetric({
+      id: 'radiationFlux',
+      label: 'Dosimetry Radiation Flux',
+      shortLabel: 'RAD FLUX',
+      value: radFlux,
+      unit: 'mSv/h',
+      decimals: 2,
+      minBound: 0.0,
+      maxBound: 2.5,
+      isHabMode,
+    }),
+    coreTemp: createVitalMetric({
+      id: 'coreTemp',
+      label: 'Core Body Temperature',
+      shortLabel: 'CORE TEMP',
+      value: coreTemp,
+      unit: '°C',
+      decimals: 1,
+      minBound: 35.8,
+      maxBound: 38.4,
+      isHabMode,
+    }),
+    suitPressure: createVitalMetric({
+      id: 'suitPressure',
+      label: isHabMode ? 'Module Cabin Pressure' : 'EMU Suit Loop Pressure',
+      shortLabel: isHabMode ? 'CABIN PRESS' : 'SUIT PRESS',
+      value: suitPressure,
+      unit: 'kPa',
+      decimals: 1,
+      minBound: isHabMode ? 95.0 : 26.5,
+      maxBound: isHabMode ? 103.5 : 31.5,
+      isHabMode,
+    }),
+    ppCO2: createVitalMetric({
+      id: 'ppCO2',
+      label: isHabMode ? 'Module Partial Pressure CO2' : 'Inspired Partial Pressure CO2',
+      shortLabel: 'ppCO2',
+      value: ppCO2,
+      unit: 'kPa',
+      decimals: 2,
+      minBound: 0.0,
+      maxBound: 0.85,
+      isHabMode,
+    }),
+  };
+
+  const vitalSeverities = Object.values(vitals).map((v) => v.severity);
+  const status: TelemetrySeverity = vitalSeverities.includes('critical')
+    ? 'critical'
+    : vitalSeverities.includes('advisory') || input.clearanceStatus === 'REVIEW_REQUIRED'
+    ? 'advisory'
+    : 'nominal';
+
+  const stationLocation =
+    input.clearanceStatus === 'HAB_ONLY'
+      ? 'Columbus BioLab (Hab-Restricted)'
+      : input.clearanceStatus === 'REVIEW_REQUIRED'
+      ? 'Columbus Med Bay (Hold)'
+      : 'Quest Airlock Exterior';
+
+  return {
+    id,
+    callsign,
+    name: input.subjectName?.trim() || callsign,
+    role: input.subjectRole?.trim() || (isHabMode ? 'Habitat Crew Subject' : 'EVA Crew Subject'),
+    stationLocation,
+    suitId: isHabMode ? `IVA-${callsign}` : `EMU-${callsign}`,
+    evaElapsedSec: isHabMode ? 0 : 1240,
+    o2ReservePct: o2Reserve,
+    batteryPct: isHabMode ? 98.0 : 88.0,
+    status,
+    medicalReport: {
+      fileName: input.fileName,
+      issuer: input.issuer?.trim() || 'Flight Medical Clinic',
+      clearanceStatus: input.clearanceStatus,
+      category: input.recordCategory ?? 'MEDICAL_STATS',
+      summary: input.parsedSummary?.trim() || `Calibrated from ${input.fileName}`,
     },
-  },
-  {
-    id: 'eva-02',
-    callsign: 'EVA-02',
-    name: 'Marcus Chen',
-    role: 'Flight Engineer',
-    stationLocation: 'Truss Segment S4',
-    suitId: 'EMU-412',
-    evaElapsedSec: 15129,
-    o2ReservePct: 74.1,
-    batteryPct: 79.5,
-    status: 'nominal',
-    vitals: {
-      spo2: {
-        id: 'spo2',
-        label: 'Arterial Oxygen Saturation (SpO2)',
-        shortLabel: 'SpO2',
-        value: 97.9,
-        unit: '%',
-        decimals: 1,
-        minBound: 94.0,
-        maxBound: 100.0,
-        baselineValue: 98.1,
-        severity: 'nominal',
-        deltaPerMin: 0.0,
-        history: [98.1, 98.0, 97.9, 98.0, 97.8, 97.9, 98.0, 97.9, 97.8, 97.9, 98.0, 97.9],
-        osdrBaselineHistory: [98.2, 98.1, 98.1, 98.2, 98.1, 98.0, 98.1, 98.1, 98.1, 98.1, 98.1, 98.1],
-      },
-      heartRate: {
-        id: 'heartRate',
-        label: 'Cardiac Rate',
-        shortLabel: 'HEART RATE',
-        value: 88,
-        unit: 'BPM',
-        decimals: 0,
-        minBound: 50,
-        maxBound: 135,
-        baselineValue: 84,
-        severity: 'nominal',
-        deltaPerMin: 1.0,
-        history: [82, 84, 85, 87, 86, 89, 90, 88, 87, 88, 89, 88],
-        osdrBaselineHistory: [80, 82, 83, 84, 83, 84, 85, 84, 83, 84, 84, 84],
-      },
-      hrv: {
-        id: 'hrv',
-        label: 'Heart Rate Variability (RMSSD)',
-        shortLabel: 'HRV RMSSD',
-        value: 39.4,
-        unit: 'ms',
-        decimals: 1,
-        minBound: 22.0,
-        maxBound: 85.0,
-        baselineValue: 41.0,
-        severity: 'nominal',
-        deltaPerMin: -0.3,
-        history: [41.5, 41.0, 40.2, 39.8, 40.1, 39.5, 39.2, 39.7, 39.6, 39.3, 39.5, 39.4],
-        osdrBaselineHistory: [41.2, 41.0, 41.1, 40.9, 41.0, 41.2, 41.0, 40.9, 41.1, 41.0, 41.0, 41.0],
-      },
-      radiationFlux: {
-        id: 'radiationFlux',
-        label: 'Dosimetry Radiation Flux',
-        shortLabel: 'RAD FLUX',
-        value: 0.45,
-        unit: 'mSv/h',
-        decimals: 2,
-        minBound: 0.0,
-        maxBound: 2.5,
-        baselineValue: 0.41,
-        severity: 'nominal',
-        deltaPerMin: 0.01,
-        history: [0.4, 0.41, 0.42, 0.43, 0.44, 0.43, 0.44, 0.45, 0.44, 0.45, 0.46, 0.45],
-        osdrBaselineHistory: [0.4, 0.41, 0.41, 0.41, 0.42, 0.41, 0.41, 0.41, 0.41, 0.41, 0.41, 0.41],
-      },
-      coreTemp: {
-        id: 'coreTemp',
-        label: 'Core Body Temperature',
-        shortLabel: 'CORE TEMP',
-        value: 37.4,
-        unit: '°C',
-        decimals: 1,
-        minBound: 35.8,
-        maxBound: 38.4,
-        baselineValue: 37.2,
-        severity: 'nominal',
-        deltaPerMin: 0.0,
-        history: [37.2, 37.2, 37.3, 37.3, 37.3, 37.4, 37.4, 37.4, 37.4, 37.4, 37.4, 37.4],
-        osdrBaselineHistory: [37.2, 37.2, 37.2, 37.2, 37.2, 37.2, 37.2, 37.2, 37.2, 37.2, 37.2, 37.2],
-      },
-      suitPressure: {
-        id: 'suitPressure',
-        label: 'EMU Suit Loop Pressure',
-        shortLabel: 'SUIT PRESS',
-        value: 29.5,
-        unit: 'kPa',
-        decimals: 1,
-        minBound: 26.5,
-        maxBound: 31.5,
-        baselineValue: 29.6,
-        severity: 'nominal',
-        deltaPerMin: 0.0,
-        history: [29.6, 29.6, 29.5, 29.5, 29.6, 29.5, 29.5, 29.5, 29.6, 29.5, 29.5, 29.5],
-        osdrBaselineHistory: [29.6, 29.6, 29.6, 29.6, 29.6, 29.6, 29.6, 29.6, 29.6, 29.6, 29.6, 29.6],
-      },
-      ppCO2: {
-        id: 'ppCO2',
-        label: 'Inspired Partial Pressure CO2',
-        shortLabel: 'ppCO2',
-        value: 0.39,
-        unit: 'kPa',
-        decimals: 2,
-        minBound: 0.0,
-        maxBound: 0.85,
-        baselineValue: 0.36,
-        severity: 'nominal',
-        deltaPerMin: 0.01,
-        history: [0.35, 0.36, 0.37, 0.37, 0.38, 0.38, 0.39, 0.38, 0.39, 0.39, 0.39, 0.39],
-        osdrBaselineHistory: [0.35, 0.36, 0.36, 0.36, 0.36, 0.36, 0.36, 0.36, 0.36, 0.36, 0.36, 0.36],
-      },
-    },
-  },
-  {
-    id: 'hab-03',
-    callsign: 'HAB-03',
-    name: 'Dr. Priya Nair',
-    role: 'Medical Officer',
-    stationLocation: 'Columbus BioLab',
-    suitId: 'IV-IVA-03',
-    evaElapsedSec: 0,
-    o2ReservePct: 96.2,
-    batteryPct: 98.0,
-    status: 'nominal',
-    vitals: {
-      spo2: {
-        id: 'spo2',
-        label: 'Arterial Oxygen Saturation (SpO2)',
-        shortLabel: 'SpO2',
-        value: 99.1,
-        unit: '%',
-        decimals: 1,
-        minBound: 94.0,
-        maxBound: 100.0,
-        baselineValue: 99.0,
-        severity: 'nominal',
-        deltaPerMin: 0.0,
-        history: [99.0, 99.1, 99.0, 99.2, 99.1, 99.0, 99.1, 99.1, 99.2, 99.1, 99.0, 99.1],
-        osdrBaselineHistory: [99.0, 99.0, 99.1, 99.0, 99.0, 99.0, 99.1, 99.0, 99.0, 99.0, 99.0, 99.0],
-      },
-      heartRate: {
-        id: 'heartRate',
-        label: 'Cardiac Rate',
-        shortLabel: 'HEART RATE',
-        value: 64,
-        unit: 'BPM',
-        decimals: 0,
-        minBound: 50,
-        maxBound: 135,
-        baselineValue: 65,
-        severity: 'nominal',
-        deltaPerMin: 0.0,
-        history: [65, 64, 65, 63, 64, 65, 64, 63, 64, 64, 65, 64],
-        osdrBaselineHistory: [65, 65, 64, 65, 65, 64, 65, 65, 65, 64, 65, 65],
-      },
-      hrv: {
-        id: 'hrv',
-        label: 'Heart Rate Variability (RMSSD)',
-        shortLabel: 'HRV RMSSD',
-        value: 58.6,
-        unit: 'ms',
-        decimals: 1,
-        minBound: 22.0,
-        maxBound: 85.0,
-        baselineValue: 57.5,
-        severity: 'nominal',
-        deltaPerMin: 0.1,
-        history: [57.2, 57.8, 58.0, 58.3, 58.1, 58.5, 58.7, 58.4, 58.6, 58.8, 58.5, 58.6],
-        osdrBaselineHistory: [57.5, 57.6, 57.5, 57.4, 57.5, 57.6, 57.5, 57.5, 57.4, 57.5, 57.6, 57.5],
-      },
-      radiationFlux: {
-        id: 'radiationFlux',
-        label: 'Dosimetry Radiation Flux',
-        shortLabel: 'RAD FLUX',
-        value: 0.21,
-        unit: 'mSv/h',
-        decimals: 2,
-        minBound: 0.0,
-        maxBound: 2.5,
-        baselineValue: 0.21,
-        severity: 'nominal',
-        deltaPerMin: 0.0,
-        history: [0.21, 0.2, 0.21, 0.22, 0.21, 0.21, 0.2, 0.21, 0.21, 0.22, 0.21, 0.21],
-        osdrBaselineHistory: [0.21, 0.21, 0.21, 0.21, 0.21, 0.21, 0.21, 0.21, 0.21, 0.21, 0.21, 0.21],
-      },
-      coreTemp: {
-        id: 'coreTemp',
-        label: 'Core Body Temperature',
-        shortLabel: 'CORE TEMP',
-        value: 36.8,
-        unit: '°C',
-        decimals: 1,
-        minBound: 35.8,
-        maxBound: 38.4,
-        baselineValue: 36.8,
-        severity: 'nominal',
-        deltaPerMin: 0.0,
-        history: [36.8, 36.8, 36.8, 36.9, 36.8, 36.8, 36.8, 36.8, 36.8, 36.8, 36.8, 36.8],
-        osdrBaselineHistory: [36.8, 36.8, 36.8, 36.8, 36.8, 36.8, 36.8, 36.8, 36.8, 36.8, 36.8, 36.8],
-      },
-      suitPressure: {
-        id: 'suitPressure',
-        label: 'Module Cabin Pressure',
-        shortLabel: 'CABIN PRESS',
-        value: 101.2,
-        unit: 'kPa',
-        decimals: 1,
-        minBound: 95.0,
-        maxBound: 103.5,
-        baselineValue: 101.3,
-        severity: 'nominal',
-        deltaPerMin: 0.0,
-        history: [101.3, 101.3, 101.2, 101.3, 101.2, 101.2, 101.3, 101.2, 101.2, 101.2, 101.3, 101.2],
-        osdrBaselineHistory: [101.3, 101.3, 101.3, 101.3, 101.3, 101.3, 101.3, 101.3, 101.3, 101.3, 101.3, 101.3],
-      },
-      ppCO2: {
-        id: 'ppCO2',
-        label: 'Module Partial Pressure CO2',
-        shortLabel: 'ppCO2',
-        value: 0.28,
-        unit: 'kPa',
-        decimals: 2,
-        minBound: 0.0,
-        maxBound: 0.85,
-        baselineValue: 0.28,
-        severity: 'nominal',
-        deltaPerMin: 0.0,
-        history: [0.27, 0.28, 0.28, 0.29, 0.28, 0.28, 0.28, 0.27, 0.28, 0.28, 0.28, 0.28],
-        osdrBaselineHistory: [0.28, 0.28, 0.28, 0.28, 0.28, 0.28, 0.28, 0.28, 0.28, 0.28, 0.28, 0.28],
-      },
-    },
-  },
-];
+    vitals,
+  };
+}
 
 const INITIAL_SECTORS: HabitatSector[] = [
   {
@@ -440,7 +308,7 @@ const INITIAL_SECTORS: HabitatSector[] = [
     ppCO2Kpa: 0.31,
     tempC: 20.6,
     radiationMsvH: 0.38,
-    crewIds: ['eva-01'],
+    crewIds: [],
     status: 'nominal',
     hatchSealed: true,
   },
@@ -468,7 +336,7 @@ const INITIAL_SECTORS: HabitatSector[] = [
     ppCO2Kpa: 0.28,
     tempC: 21.4,
     radiationMsvH: 0.21,
-    crewIds: ['hab-03'],
+    crewIds: [],
     status: 'nominal',
     hatchSealed: false,
   },
@@ -482,7 +350,7 @@ const INITIAL_SECTORS: HabitatSector[] = [
     ppCO2Kpa: 0.0,
     tempC: -42.5,
     radiationMsvH: 0.45,
-    crewIds: ['eva-02'],
+    crewIds: [],
     status: 'nominal',
     hatchSealed: true,
   },
@@ -508,16 +376,16 @@ const INITIAL_SCENARIOS: ContingencyScenario[] = [
     name: 'Nominal Orbital EVA',
     code: 'SCN-00',
     severity: 'nominal',
-    summary: 'Standard low-Earth orbit extravehicular activity within physiological envelope.',
+    summary: 'Standard low-Earth orbit activity within the uploaded medical report baseline envelope.',
     triggerAlertTitle: 'ALL TELEMETRY CHANNELS NOMINAL',
     countdownSec: 0,
     steps: [
       {
         id: 'nom-1',
         code: 'CHK-01',
-        title: 'Verify EMU Primary O2 Loop',
-        instruction: 'Confirm suit regulator holding steady at 29.6 kPa with zero leak delta.',
-        targetSystem: 'EMU-409 / LSS',
+        title: 'Verify Primary O2 Loop',
+        instruction: 'Confirm regulator holding steady within uploaded medical clearance band with zero leak delta.',
+        targetSystem: 'PRIMARY / LSS',
         durationSec: 30,
         completed: true,
         critical: false,
@@ -539,16 +407,16 @@ const INITIAL_SCENARIOS: ContingencyScenario[] = [
     name: 'EMU Suit Micro-Leak / Hypoxia',
     code: 'SCN-01',
     severity: 'critical',
-    summary: 'Rapid EMU pressure decay (-0.9 kPa/min) with secondary arterial SpO2 desaturation.',
-    triggerAlertTitle: 'CRITICAL: SUIT PRESSURE DECAY & HYPOXIA WARNING (EVA-01)',
+    summary: 'Rapid pressure decay (-0.9 kPa/min) with secondary arterial SpO2 desaturation.',
+    triggerAlertTitle: 'CRITICAL: SUIT PRESSURE DECAY & HYPOXIA WARNING',
     countdownSec: 180,
     steps: [
       {
         id: 'dec-1',
         code: 'EMG-01',
         title: 'Engage Secondary Oxygen Pack (SOP)',
-        instruction: 'Actuate SOP valve on left DCM to arrest suit pressure decay at 23.4 kPa floor.',
-        targetSystem: 'EMU-409 SOP',
+        instruction: 'Actuate SOP valve on left DCM to arrest pressure decay at 23.4 kPa floor.',
+        targetSystem: 'PRIMARY SOP',
         durationSec: 15,
         completed: false,
         critical: true,
@@ -556,8 +424,8 @@ const INITIAL_SCENARIOS: ContingencyScenario[] = [
       {
         id: 'dec-2',
         code: 'EMG-02',
-        title: 'Terminate Truss Task & Translate to Quest',
-        instruction: 'EVA-02 assists EVA-01 along safety tether vector back to Quest Airlock.',
+        title: 'Terminate Exterior Task & Translate to Quest',
+        instruction: 'Translate affected subject along safety tether vector back to Quest Airlock.',
         targetSystem: 'SEC-01 AIRLOCK',
         durationSec: 90,
         completed: false,
@@ -577,7 +445,7 @@ const INITIAL_SCENARIOS: ContingencyScenario[] = [
         id: 'dec-4',
         code: 'EMG-04',
         title: 'Initiate Hyperbaric Medical Assessment',
-        instruction: 'HAB-03 prepares 100% O2 mask and neurological decompression screen.',
+        instruction: 'Prepare 100% O2 mask and neurological decompression screen in Columbus Med Bay.',
         targetSystem: 'COLUMBUS MED',
         durationSec: 45,
         completed: false,
@@ -598,7 +466,7 @@ const INITIAL_SCENARIOS: ContingencyScenario[] = [
         id: 'spe-1',
         code: 'RAD-01',
         title: 'Abort Exterior EVA Operations',
-        instruction: 'Recall EVA-01 and EVA-02 immediately into shielded habitat volume.',
+        instruction: 'Recall active EVA subject immediately into shielded habitat volume.',
         targetSystem: 'EVA CREW',
         durationSec: 60,
         completed: false,
@@ -607,8 +475,8 @@ const INITIAL_SCENARIOS: ContingencyScenario[] = [
       {
         id: 'spe-2',
         code: 'RAD-02',
-        title: 'Relocate Crew to Water-Wall Storm Shelter',
-        instruction: 'Move all crew to SEC-05 Cupola/Zvezda high-density polyethylene barrier.',
+        title: 'Relocate Subject to Water-Wall Storm Shelter',
+        instruction: 'Move active subject to SEC-05 Cupola/Zvezda high-density polyethylene barrier.',
         targetSystem: 'SEC-05 SHELTER',
         durationSec: 120,
         completed: false,
@@ -658,7 +526,7 @@ const INITIAL_SCENARIOS: ContingencyScenario[] = [
       {
         id: 'co2-3',
         code: 'ECL-03',
-        title: 'Monitor Crew Cognitive & HRV Baseline',
+        title: 'Monitor Subject Cognitive & HRV Baseline',
         instruction: 'Log 5-minute RMSSD recovery trend to verify normocapnic stabilization.',
         targetSystem: 'BIO-TELEM',
         durationSec: 60,
@@ -669,7 +537,7 @@ const INITIAL_SCENARIOS: ContingencyScenario[] = [
   },
 ];
 
-const OSDR_DATASETS: OsdrDatasetRecord[] = [
+const OSDR_REFERENCE_DATASETS: OsdrDatasetRecord[] = [
   {
     accessionId: 'OSD-542',
     missionName: 'Inspiration4 Orbital Biomedical Baseline',
@@ -679,7 +547,7 @@ const OSDR_DATASETS: OsdrDatasetRecord[] = [
     meanHr: 71.8,
     meanRadiationMsvH: 0.36,
     meanCoreTemp: 37.0,
-    notes: 'Validated continuous wearable SpO2, ECG HRV, and ambient radiation dosimetry across 3-day orbital flight.',
+    notes: 'NASA OSDR reference: continuous wearable SpO2, ECG HRV, and ambient radiation dosimetry.',
   },
   {
     accessionId: 'OSD-318',
@@ -690,7 +558,7 @@ const OSDR_DATASETS: OsdrDatasetRecord[] = [
     meanHr: 84.2,
     meanRadiationMsvH: 0.41,
     meanCoreTemp: 37.3,
-    notes: 'EMU suit pressure stability (29.6 kPa), LCVG thermal loop exchange, and ppCO2 scrubbing kinetics.',
+    notes: 'NASA OSDR reference: EMU suit pressure stability (29.6 kPa) and thermal loop exchange.',
   },
   {
     accessionId: 'OSD-611',
@@ -701,77 +569,24 @@ const OSDR_DATASETS: OsdrDatasetRecord[] = [
     meanHr: 76.5,
     meanRadiationMsvH: 0.24,
     meanCoreTemp: 36.9,
-    notes: 'Controlled station-board elevated ppCO2 (0.55–0.75 kPa) effects on RMSSD and cerebral perfusion.',
-  },
-];
-
-const INITIAL_LOGS: TelemetryLogEntry[] = [
-  {
-    id: 'log-01',
-    timestampUtc: '22:48:10 UTC',
-    met: 'T+04:11:10',
-    crewId: 'eva-01',
-    crewCallsign: 'EVA-01',
-    provenance: 'OSDR-FLT',
-    datasetRef: 'OSD-318',
-    severity: 'nominal',
-    parameter: 'SUIT PRESS',
-    reading: '29.6 kPa',
-    message: 'Primary oxygen regulator stabilized within 0.1 kPa of OSD-318 reference band.',
-  },
-  {
-    id: 'log-02',
-    timestampUtc: '22:49:04 UTC',
-    met: 'T+04:12:04',
-    crewId: 'eva-02',
-    crewCallsign: 'EVA-02',
-    provenance: 'OSDR-FLT',
-    datasetRef: 'OSD-318',
-    severity: 'nominal',
-    parameter: 'HEART RATE',
-    reading: '88 BPM',
-    message: 'Truss S4 torque task load elevated cardiac output; HRV RMSSD nominal at 39.4 ms.',
-  },
-  {
-    id: 'log-03',
-    timestampUtc: '22:49:42 UTC',
-    met: 'T+04:12:42',
-    crewId: 'hab-03',
-    crewCallsign: 'HAB-03',
-    provenance: 'OSDR-FLT',
-    datasetRef: 'OSD-542',
-    severity: 'nominal',
-    parameter: 'RAD FLUX',
-    reading: '0.21 mSv/h',
-    message: 'Columbus BioLab hull attenuation nominal during South Atlantic Anomaly transit.',
-  },
-  {
-    id: 'log-04',
-    timestampUtc: '22:50:15 UTC',
-    met: 'T+04:13:15',
-    crewId: 'eva-01',
-    crewCallsign: 'EVA-01',
-    provenance: 'OSDR-FLT',
-    datasetRef: 'OSD-542',
-    severity: 'nominal',
-    parameter: 'SpO2',
-    reading: '98.4 %',
-    message: 'Optical pulse oximetry lock verified; 99.8% packet integrity over Ku-band link.',
+    notes: 'NASA OSDR reference: elevated ppCO2 effects on RMSSD and cerebral perfusion.',
   },
 ];
 
 class TelemetryEngine {
   private metSeconds = 15195;
   private provenanceMode: ProvenanceMode = 'OSDR-FLT';
-  private activeDatasetId = 'OSD-318';
+  private activeDatasetId = 'OSD-542';
   private activeScenarioId: ContingencyScenarioId = 'nominal-eva';
+  private activeCrewId = '';
   private isStreaming = true;
   private countdownSec = 0;
   private alertAcknowledged = false;
-  private crew: CrewMember[] = structuredClone(INITIAL_CREW);
+  private crew: CrewMember[] = [];
   private sectors: HabitatSector[] = structuredClone(INITIAL_SECTORS);
   private scenarios: ContingencyScenario[] = structuredClone(INITIAL_SCENARIOS);
-  private logs: TelemetryLogEntry[] = structuredClone(INITIAL_LOGS);
+  private logs: TelemetryLogEntry[] = [];
+  private uploadedDatasets: OsdrDatasetRecord[] = [];
   private tickHandle: ReturnType<typeof setInterval> | null = null;
 
   start(): void {
@@ -796,30 +611,33 @@ class TelemetryEngine {
       this.countdownSec -= 1;
     }
 
+    const primaryCrewId = this.activeCrewId || this.crew[0]?.id || '';
+
     this.crew = this.crew.map((member) => {
       const updatedVitals = { ...member.vitals };
+      const isHabMode = member.medicalReport?.clearanceStatus !== 'CLEARED_EVA';
 
       (Object.keys(updatedVitals) as VitalKey[]).forEach((key) => {
         const metric = updatedVitals[key];
         const baseline = metric.baselineValue;
         let target = baseline;
-        let jitter = (Math.random() - 0.5) * (key === 'heartRate' ? 2.2 : 0.14);
+        let jitter = (Math.random() - 0.5) * (key === 'heartRate' ? 2.0 : 0.12);
 
         if (this.provenanceMode === 'SIM-RUN') {
-          if (this.activeScenarioId === 'suit-decompression' && member.id === 'eva-01') {
-            if (key === 'suitPressure') target = 23.6;
+          if (this.activeScenarioId === 'suit-decompression' && member.id === primaryCrewId) {
+            if (key === 'suitPressure') target = isHabMode ? 90.5 : 23.6;
             if (key === 'spo2') target = 90.4;
-            if (key === 'heartRate') target = 148;
+            if (key === 'heartRate') target = Math.max(145, baseline + 52);
             if (key === 'hrv') target = 18.5;
           } else if (this.activeScenarioId === 'solar-particle-event') {
             if (key === 'radiationFlux') {
-              target = member.id === 'hab-03' ? 0.68 : 2.24;
-              jitter = (Math.random() - 0.5) * 0.18;
+              target = isHabMode ? 0.88 : 2.24;
+              jitter = (Math.random() - 0.5) * 0.16;
             }
-            if (key === 'heartRate') target = member.id === 'hab-03' ? 74 : 112;
+            if (key === 'heartRate') target = isHabMode ? baseline + 10 : baseline + 34;
           } else if (this.activeScenarioId === 'co2-scrubber-drift') {
             if (key === 'ppCO2') target = 0.78;
-            if (key === 'heartRate') target = baseline + 18;
+            if (key === 'heartRate') target = baseline + 16;
             if (key === 'hrv') target = 24.5;
           }
         }
@@ -829,7 +647,7 @@ class TelemetryEngine {
         const factor = Math.pow(10, metric.decimals);
         const nextVal = Math.round(nextRaw * factor) / factor;
         const delta = Math.round((nextVal - metric.value) * 6 * factor) / factor;
-        const severity = evaluateVitalSeverity(key, nextVal, member.id);
+        const severity = evaluateVitalSeverity(key, nextVal, isHabMode);
 
         updatedVitals[key] = {
           ...metric,
@@ -843,20 +661,21 @@ class TelemetryEngine {
       const vitalSeverities = Object.values(updatedVitals).map((v) => v.severity);
       const nextStatus: TelemetrySeverity = vitalSeverities.includes('critical')
         ? 'critical'
-        : vitalSeverities.includes('advisory')
+        : vitalSeverities.includes('advisory') ||
+          member.medicalReport?.clearanceStatus === 'REVIEW_REQUIRED'
         ? 'advisory'
         : 'nominal';
 
       const o2Burn =
         this.activeScenarioId === 'suit-decompression' &&
-        member.id === 'eva-01' &&
+        member.id === primaryCrewId &&
         this.provenanceMode === 'SIM-RUN'
           ? 0.14
           : 0.01;
 
       return {
         ...member,
-        evaElapsedSec: member.id === 'hab-03' ? 0 : member.evaElapsedSec + 1,
+        evaElapsedSec: isHabMode ? 0 : member.evaElapsedSec + 1,
         o2ReservePct: Math.max(12, member.o2ReservePct - o2Burn),
         status: nextStatus,
         vitals: updatedVitals,
@@ -864,15 +683,26 @@ class TelemetryEngine {
     });
 
     this.sectors = this.sectors.map((sec) => {
-      let targetRad =
-        sec.id === 'truss-s4'
+      const occupants = this.crew.filter((c) => sec.crewIds.includes(c.id));
+      const baseRad =
+        occupants.length > 0
+          ? occupants.reduce((sum, c) => sum + c.vitals.radiationFlux.baselineValue, 0) /
+            occupants.length
+          : sec.id === 'truss-s4'
           ? 0.45
           : sec.id === 'quest-airlock'
           ? 0.38
           : sec.id === 'cupola-obs'
           ? 0.14
           : 0.22;
-      let targetCo2 = sec.id === 'truss-s4' ? 0 : 0.28;
+
+      let targetRad = baseRad;
+      let targetCo2 =
+        occupants.length > 0
+          ? occupants.reduce((sum, c) => sum + c.vitals.ppCO2.baselineValue, 0) / occupants.length
+          : sec.id === 'truss-s4'
+          ? 0
+          : 0.28;
       let targetPress = sec.id === 'truss-s4' ? 0 : sec.id === 'quest-airlock' ? 70.4 : 101.3;
 
       if (this.provenanceMode === 'SIM-RUN') {
@@ -889,10 +719,15 @@ class TelemetryEngine {
       const nextCo2 = sec.ppCO2Kpa + (targetCo2 - sec.ppCO2Kpa) * 0.22;
       const nextPress = sec.pressureKpa + (targetPress - sec.pressureKpa) * 0.22;
 
+      const hasReviewHold = occupants.some(
+        (c) => c.medicalReport?.clearanceStatus === 'REVIEW_REQUIRED' || c.status === 'advisory'
+      );
+      const hasCriticalOccupant = occupants.some((c) => c.status === 'critical');
+
       const status: TelemetrySeverity =
-        nextRad >= 1.8 || (sec.id === 'quest-airlock' && nextPress < 62)
+        hasCriticalOccupant || nextRad >= 1.8 || (sec.id === 'quest-airlock' && nextPress < 62)
           ? 'critical'
-          : nextRad >= 0.9 || nextCo2 >= 0.6
+          : hasReviewHold || nextRad >= 0.9 || nextCo2 >= 0.6
           ? 'advisory'
           : 'nominal';
 
@@ -938,7 +773,7 @@ class TelemetryEngine {
       sectors: this.sectors,
       scenarios: this.scenarios,
       logs: this.logs,
-      datasets: OSDR_DATASETS,
+      datasets: [...this.uploadedDatasets, ...OSDR_REFERENCE_DATASETS],
     };
   }
 
@@ -948,17 +783,18 @@ class TelemetryEngine {
   }
 
   setProvenance(mode: ProvenanceMode, datasetId?: string): TelemetrySnapshot {
-    if (datasetId && OSDR_DATASETS.some((d) => d.accessionId === datasetId)) {
+    const allDatasets = [...this.uploadedDatasets, ...OSDR_REFERENCE_DATASETS];
+    if (datasetId && allDatasets.some((d) => d.accessionId === datasetId)) {
       this.activeDatasetId = datasetId;
     }
     if (mode === 'OSDR-FLT') {
-      return this.selectScenario('nominal-eva', 'eva-01');
+      return this.selectScenario('nominal-eva', this.activeCrewId || this.crew[0]?.id);
     }
     this.provenanceMode = 'SIM-RUN';
     return this.getSnapshot();
   }
 
-  selectScenario(id: ContingencyScenarioId, crewId = 'eva-01'): TelemetrySnapshot {
+  selectScenario(id: ContingencyScenarioId, crewId?: string): TelemetrySnapshot {
     const target = this.scenarios.find((s) => s.id === id);
     if (!target) {
       return this.getSnapshot();
@@ -968,30 +804,43 @@ class TelemetryEngine {
     this.countdownSec = target.countdownSec;
     this.alertAcknowledged = false;
 
+    const subject =
+      this.crew.find((c) => c.id === crewId) ??
+      this.crew.find((c) => c.id === this.activeCrewId) ??
+      this.crew[0];
+    if (subject) {
+      this.activeCrewId = subject.id;
+    }
+
     this.appendLog({
-      crewId,
-      crewCallsign: id === 'solar-particle-event' ? 'ALL CREW' : 'EVA-01',
+      crewId: subject?.id ?? 'station',
+      crewCallsign:
+        id === 'solar-particle-event' ? 'ALL CREW' : subject?.callsign ?? 'STATION',
       provenance: this.provenanceMode,
       datasetRef: target.code,
       severity: target.severity,
       parameter: 'SCENARIO',
       reading: target.code,
       message: `${target.name} ${
-        id === 'nominal-eva' ? 'restored to baseline envelope.' : 'contingency simulation injected.'
+        id === 'nominal-eva' ? 'restored to medical baseline envelope.' : 'contingency simulation injected.'
       }`,
     });
 
     return this.getSnapshot();
   }
 
-  acknowledgeAlert(crewId: string): TelemetrySnapshot {
-    const member = this.crew.find((c) => c.id === crewId) ?? this.crew[0];
-    const activeScenario = this.scenarios.find((s) => s.id === this.activeScenarioId) ?? this.scenarios[0];
+  acknowledgeAlert(crewId?: string): TelemetrySnapshot {
+    const member =
+      this.crew.find((c) => c.id === crewId) ??
+      this.crew.find((c) => c.id === this.activeCrewId) ??
+      this.crew[0];
+    const activeScenario =
+      this.scenarios.find((s) => s.id === this.activeScenarioId) ?? this.scenarios[0];
     this.alertAcknowledged = true;
 
     this.appendLog({
-      crewId: member.id,
-      crewCallsign: member.callsign,
+      crewId: member?.id ?? 'station',
+      crewCallsign: member?.callsign ?? 'STATION',
       provenance: this.provenanceMode,
       datasetRef: this.provenanceMode === 'OSDR-FLT' ? this.activeDatasetId : activeScenario.code,
       severity: this.getOverallSeverity(),
@@ -1017,12 +866,15 @@ class TelemetryEngine {
   }
 
   toggleHatch(sectorId: string): TelemetrySnapshot {
-    const activeScenario = this.scenarios.find((s) => s.id === this.activeScenarioId) ?? this.scenarios[0];
+    const activeScenario =
+      this.scenarios.find((s) => s.id === this.activeScenarioId) ?? this.scenarios[0];
+    const primary = this.crew.find((c) => c.id === this.activeCrewId) ?? this.crew[0];
+
     this.sectors = this.sectors.map((sec) => {
       if (sec.id !== sectorId) return sec;
       const nextSealed = !sec.hatchSealed;
       this.appendLog({
-        crewId: 'hab-03',
+        crewId: primary?.id ?? 'station',
         crewCallsign: sec.code,
         provenance: this.provenanceMode,
         datasetRef: this.provenanceMode === 'OSDR-FLT' ? this.activeDatasetId : activeScenario.code,
@@ -1054,9 +906,10 @@ class TelemetryEngine {
       return this.getSnapshot();
     }
 
+    const isHabMode = member.medicalReport?.clearanceStatus !== 'CLEARED_EVA';
     const factor = Math.pow(10, metric.decimals);
     const rounded = Math.round(payload.value * factor) / factor;
-    const severity = evaluateVitalSeverity(payload.parameter, rounded, member.id);
+    const severity = evaluateVitalSeverity(payload.parameter, rounded, isHabMode);
 
     member.vitals[payload.parameter] = {
       ...metric,
@@ -1068,7 +921,8 @@ class TelemetryEngine {
     const vitalSeverities = Object.values(member.vitals).map((v) => v.severity);
     member.status = vitalSeverities.includes('critical')
       ? 'critical'
-      : vitalSeverities.includes('advisory')
+      : vitalSeverities.includes('advisory') ||
+        member.medicalReport?.clearanceStatus === 'REVIEW_REQUIRED'
       ? 'advisory'
       : 'nominal';
 
@@ -1080,7 +934,142 @@ class TelemetryEngine {
       severity,
       parameter: metric.shortLabel,
       reading: `${rounded.toFixed(metric.decimals)} ${metric.unit}`,
-      message: `External telemetry packet ingested for ${member.callsign} (${metric.shortLabel}).`,
+      message: `Telemetry packet ingested for ${member.name} (${member.callsign}).`,
+    });
+
+    return this.getSnapshot();
+  }
+
+  private placeCrewInSectors(): void {
+    const evaClearedIds = this.crew
+      .filter((c) => c.medicalReport?.clearanceStatus === 'CLEARED_EVA')
+      .map((c) => c.id);
+    const habRestrictedIds = this.crew
+      .filter((c) => c.medicalReport?.clearanceStatus !== 'CLEARED_EVA')
+      .map((c) => c.id);
+
+    this.sectors = this.sectors.map((sec) => {
+      if (sec.id === 'quest-airlock') {
+        const hasRestricted = habRestrictedIds.length > 0;
+        return {
+          ...sec,
+          crewIds: evaClearedIds,
+          hatchSealed: hasRestricted ? true : sec.hatchSealed,
+        };
+      }
+      if (sec.id === 'columbus-lab') {
+        const hasReview = this.crew.some(
+          (c) =>
+            habRestrictedIds.includes(c.id) &&
+            c.medicalReport?.clearanceStatus === 'REVIEW_REQUIRED'
+        );
+        return {
+          ...sec,
+          crewIds: habRestrictedIds,
+          status: hasReview ? 'advisory' : 'nominal',
+        };
+      }
+      return {
+        ...sec,
+        crewIds: [],
+      };
+    });
+  }
+
+  private upsertUploadedDataset(member: CrewMember): string {
+    const datasetId = `RPT-${member.callsign}`;
+    const record: OsdrDatasetRecord = {
+      accessionId: datasetId,
+      missionName: `${member.name} — ${member.medicalReport?.fileName ?? 'Medical Report'}`,
+      cohortSize: 1,
+      durationHours: Number((member.evaElapsedSec / 3600 || 1.0).toFixed(1)),
+      meanSpo2: member.vitals.spo2.baselineValue,
+      meanHr: member.vitals.heartRate.baselineValue,
+      meanRadiationMsvH: member.vitals.radiationFlux.baselineValue,
+      meanCoreTemp: member.vitals.coreTemp.baselineValue,
+      notes: `${member.medicalReport?.issuer ?? 'Flight Medical'} · ${member.medicalReport?.clearanceStatus.replace('_', ' ') ?? 'CLEARED'} · ${member.medicalReport?.summary ?? ''}`,
+    };
+
+    const withoutExisting = this.uploadedDatasets.filter((d) => d.accessionId !== datasetId);
+    this.uploadedDatasets = [record, ...withoutExisting];
+    return datasetId;
+  }
+
+  syncMedicalRecords(records: MedicalCalibrationInput[]): TelemetrySnapshot {
+    if (records.length === 0) {
+      this.crew = [];
+      this.activeCrewId = '';
+      this.uploadedDatasets = [];
+      this.activeDatasetId = 'OSD-542';
+      this.sectors = structuredClone(INITIAL_SECTORS);
+      this.logs = [];
+      return this.getSnapshot();
+    }
+
+    const builtMap = new Map<string, CrewMember>();
+    records.forEach((rec) => {
+      const member = buildCrewMemberFromMedical(rec);
+      if (!builtMap.has(member.id)) {
+        builtMap.set(member.id, member);
+      }
+    });
+
+    this.crew = Array.from(builtMap.values());
+    this.uploadedDatasets = [];
+    // Build datasets in reverse so newest ends up first
+    [...this.crew].reverse().forEach((m) => {
+      this.upsertUploadedDataset(m);
+    });
+
+    const primary = this.crew[0];
+    this.activeCrewId = primary.id;
+    this.activeDatasetId = `RPT-${primary.callsign}`;
+    this.placeCrewInSectors();
+
+    if (this.logs.length === 0) {
+      this.appendLog({
+        crewId: primary.id,
+        crewCallsign: primary.callsign,
+        provenance: 'OSDR-FLT',
+        datasetRef: this.activeDatasetId,
+        severity: primary.status,
+        parameter: 'MED REPORT',
+        reading: `${primary.vitals.spo2.baselineValue.toFixed(1)}% / ${primary.vitals.heartRate.baselineValue} BPM`,
+        message: `Loaded medical report for ${primary.name} (${primary.callsign}) from ${primary.medicalReport?.fileName}.`,
+      });
+    }
+
+    return this.getSnapshot();
+  }
+
+  calibrateFromMedicalRecord(payload: MedicalCalibrationInput): TelemetrySnapshot {
+    const member = buildCrewMemberFromMedical(payload);
+    const existingIdx = this.crew.findIndex(
+      (c) => c.id === member.id || c.callsign === member.callsign
+    );
+    if (existingIdx >= 0) {
+      this.crew[existingIdx] = member;
+    } else {
+      this.crew = [member, ...this.crew];
+    }
+
+    this.activeCrewId = member.id;
+    const datasetId = this.upsertUploadedDataset(member);
+    this.activeDatasetId = datasetId;
+    this.provenanceMode = 'OSDR-FLT';
+    this.activeScenarioId = 'nominal-eva';
+    this.countdownSec = 0;
+    this.placeCrewInSectors();
+
+    this.appendLog({
+      crewId: member.id,
+      crewCallsign: member.callsign,
+      provenance: 'OSDR-FLT',
+      datasetRef: datasetId,
+      severity: member.status,
+      parameter: 'MED CALIB',
+      reading: `${member.vitals.spo2.baselineValue.toFixed(1)}% / ${member.vitals.heartRate.baselineValue} BPM`,
+      message: `Calibrated Flight Deck, Orbital Matrix, Contingency & Archive for ${member.name} (${member.callsign}) from ${payload.fileName}.`,
     });
 
     return this.getSnapshot();

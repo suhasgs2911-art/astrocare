@@ -1,0 +1,219 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default-deny global safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidPublicProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'displayName', 'callsign', 'roleTitle', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'callsign', 'roleTitle', 'updatedAt'])
+        && data.uid is string
+        && data.uid == userId
+        && data.uid == request.auth.uid
+        && data.displayName is string
+        && data.displayName.size() >= 1
+        && data.displayName.size() <= 80
+        && data.callsign is string
+        && data.callsign.size() >= 2
+        && data.callsign.size() <= 24
+        && data.callsign.matches('^[A-Z0-9\\-]+$')
+        && data.roleTitle is string
+        && data.roleTitle.size() >= 2
+        && data.roleTitle.size() <= 64
+        && data.updatedAt is timestamp
+        && data.updatedAt == request.time;
+    }
+
+    function isValidPrivateInfo(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'clearedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'clearedAt'])
+        && data.uid is string
+        && data.uid == userId
+        && data.uid == request.auth.uid
+        && data.email is string
+        && data.email.size() >= 3
+        && data.email.size() <= 160
+        && data.email == request.auth.token.email
+        && data.clearedAt is timestamp
+        && data.clearedAt == request.time;
+    }
+
+    function isValidTelemetryAction(data, userId, actionId) {
+      return data.keys().hasAll(['id', 'ownerUid', 'callsign', 'actionType', 'targetRef', 'metFormatted', 'summary', 'createdAt'])
+        && data.keys().hasOnly(['id', 'ownerUid', 'callsign', 'actionType', 'targetRef', 'metFormatted', 'summary', 'createdAt'])
+        && data.id is string
+        && data.id == actionId
+        && data.ownerUid is string
+        && data.ownerUid == userId
+        && data.ownerUid == request.auth.uid
+        && data.callsign is string
+        && data.callsign.size() >= 2
+        && data.callsign.size() <= 24
+        && data.actionType is string
+        && data.actionType in ['SCENARIO', 'ALERT_ACK', 'BULKHEAD', 'PROTOCOL_STEP', 'PROVENANCE']
+        && data.targetRef is string
+        && data.targetRef.size() >= 1
+        && data.targetRef.size() <= 64
+        && data.metFormatted is string
+        && data.metFormatted.size() >= 4
+        && data.metFormatted.size() <= 24
+        && data.summary is string
+        && data.summary.size() >= 1
+        && data.summary.size() <= 240
+        && data.createdAt is timestamp
+        && data.createdAt == request.time;
+    }
+
+    match /users/{userId}/public/profile {
+      allow get: if isSignedIn() && isValidId(userId);
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidPublicProfile(incoming(), userId);
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidPublicProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'callsign', 'roleTitle', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    match /users/{userId}/private/info {
+      allow get: if isVerifiedUser() && isValidId(userId) && isOwner(userId);
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidPrivateInfo(incoming(), userId);
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidPrivateInfo(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'clearedAt']);
+      allow delete: if false;
+    }
+
+    function isValidMedicalRecord(data, userId, recordId) {
+      return data.keys().hasAll([
+          'id', 'ownerUid', 'crewCallsign', 'recordCategory', 'fileName',
+          'mimeType', 'fileSizeBytes', 'serverFileId', 'issuer',
+          'clearanceStatus', 'parsedSummary', 'baselineSpo2', 'baselineHr', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'ownerUid', 'crewCallsign', 'recordCategory', 'fileName',
+          'mimeType', 'fileSizeBytes', 'serverFileId', 'issuer',
+          'clearanceStatus', 'parsedSummary', 'baselineSpo2', 'baselineHr', 'createdAt'
+        ])
+        && data.id is string
+        && data.id == recordId
+        && data.ownerUid is string
+        && data.ownerUid == userId
+        && data.ownerUid == request.auth.uid
+        && data.crewCallsign is string
+        && data.crewCallsign.size() >= 2
+        && data.crewCallsign.size() <= 24
+        && data.crewCallsign.matches('^[A-Z0-9\\-]+$')
+        && data.recordCategory is string
+        && data.recordCategory in ['MEDICAL_STATS', 'CERTIFICATE']
+        && data.fileName is string
+        && data.fileName.size() >= 1
+        && data.fileName.size() <= 160
+        && data.mimeType is string
+        && data.mimeType.size() >= 3
+        && data.mimeType.size() <= 100
+        && data.fileSizeBytes is number
+        && data.fileSizeBytes >= 0
+        && data.fileSizeBytes <= 10485760
+        && data.serverFileId is string
+        && data.serverFileId.size() <= 128
+        && data.issuer is string
+        && data.issuer.size() >= 1
+        && data.issuer.size() <= 120
+        && data.clearanceStatus is string
+        && data.clearanceStatus in ['CLEARED_EVA', 'HAB_ONLY', 'REVIEW_REQUIRED']
+        && data.parsedSummary is string
+        && data.parsedSummary.size() >= 1
+        && data.parsedSummary.size() <= 400
+        && data.baselineSpo2 is number
+        && data.baselineSpo2 >= 0
+        && data.baselineSpo2 <= 100
+        && data.baselineHr is number
+        && data.baselineHr >= 0
+        && data.baselineHr <= 260
+        && data.createdAt is timestamp
+        && data.createdAt == request.time;
+    }
+
+    match /users/{userId}/telemetryActions/{actionId} {
+      allow get: if isVerifiedUser()
+        && isValidId(userId)
+        && isValidId(actionId)
+        && isOwner(userId);
+      allow list: if isVerifiedUser()
+        && isOwner(userId)
+        && resource.data.ownerUid == request.auth.uid;
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && isValidId(actionId)
+        && isOwner(userId)
+        && isValidTelemetryAction(incoming(), userId, actionId);
+      allow update, delete: if false;
+    }
+
+    match /users/{userId}/medicalRecords/{recordId} {
+      allow get: if isVerifiedUser()
+        && isValidId(userId)
+        && isValidId(recordId)
+        && isOwner(userId);
+      allow list: if isVerifiedUser()
+        && isOwner(userId)
+        && resource.data.ownerUid == request.auth.uid;
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && isValidId(recordId)
+        && isOwner(userId)
+        && isValidMedicalRecord(incoming(), userId, recordId);
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && isValidId(recordId)
+        && isOwner(userId)
+        && isValidMedicalRecord(incoming(), userId, recordId)
+        && incoming().id == existing().id
+        && incoming().ownerUid == existing().ownerUid
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'clearanceStatus', 'issuer', 'parsedSummary', 'baselineSpo2', 'baselineHr', 'createdAt'
+        ]);
+      allow delete: if isVerifiedUser()
+        && isValidId(userId)
+        && isValidId(recordId)
+        && isOwner(userId);
+    }
+  }
+}

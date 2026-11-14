@@ -35,6 +35,13 @@ export interface CrewMember {
   o2ReservePct: number;
   batteryPct: number;
   status: TelemetrySeverity;
+  medicalReport?: {
+    fileName: string;
+    issuer: string;
+    clearanceStatus: 'CLEARED_EVA' | 'HAB_ONLY' | 'REVIEW_REQUIRED';
+    category: 'MEDICAL_STATS' | 'CERTIFICATE';
+    summary: string;
+  };
   vitals: {
     spo2: VitalMetric;
     heartRate: VitalMetric;

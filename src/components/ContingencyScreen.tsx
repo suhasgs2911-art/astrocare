@@ -194,9 +194,15 @@ export function ContingencyScreen({
               Suit O2 Depletion &amp; Return Margin
             </h3>
             <p className="font-mono text-xs text-[#94A3B8]">
-              Crew Unit: {selectedCrew.callsign} ({selectedCrew.suitId}) · Reserve{' '}
+              Subject: {selectedCrew.name} ({selectedCrew.callsign} · {selectedCrew.suitId}) · Reserve{' '}
               {selectedCrew.o2ReservePct.toFixed(1)}%
             </p>
+            {selectedCrew.medicalReport && (
+              <p className="font-mono text-[11px] text-[#00F0FF]">
+                Report: {selectedCrew.medicalReport.fileName} ·{' '}
+                {selectedCrew.medicalReport.clearanceStatus.replace('_', ' ')}
+              </p>
+            )}
           </div>
 
           <div className="rounded-lg border border-[#00F0FF]/25 bg-[#030712]/80 p-4 text-center">

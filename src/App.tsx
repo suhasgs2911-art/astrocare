@@ -1,12 +1,40 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
+  FileCheck2,
+  LogOut,
   Pause,
   Play,
   Radio,
   ShieldCheck,
   SlidersHorizontal,
+  UserCheck,
 } from 'lucide-react';
+import {
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut,
+  type User,
+} from 'firebase/auth';
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  limit,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  setDoc,
+  where,
+} from 'firebase/firestore';
+import {
+  auth,
+  db,
+  googleProvider,
+  handleFirestoreError,
+  OperationType,
+} from './firebase';
 import {
   CONTINGENCY_SCENARIOS,
   INITIAL_CREW,
@@ -15,10 +43,13 @@ import {
   OSDR_ARCHIVE_DATASETS,
 } from './data/telemetryData';
 import {
+  ClearanceStatus,
   ContingencyScenario,
   ContingencyScenarioId,
   CrewMember,
   HabitatSector,
+  MedicalRecordCategory,
+  MedicalRecordItem,
   OsdrDatasetRecord,
   ProvenanceMode,
   ScreenId,
@@ -32,9 +63,17 @@ import { TelemetryCard } from './components/TelemetryCard';
 import { LiveWaveformChart } from './components/LiveWaveformChart';
 import { OrbitalMatrixScreen } from './components/OrbitalMatrixScreen';
 import { ContingencyScreen } from './components/ContingencyScreen';
-import { ArchiveScreen } from './components/ArchiveScreen';
+import { ArchiveScreen, type OperatorAuditRecord } from './components/ArchiveScreen';
+import {
+  extractSubjectFromSummary,
+  MedicalRecordsScreen,
+  type MedicalUploadPayload,
+} from './components/MedicalRecordsScreen';
+import { SignInScreen } from './components/SignInScreen';
+import { IntroSplashScreen } from './components/IntroSplashScreen';
 import { ProvenanceBadge, StatusPill } from './components/ProvenanceAndStatus';
 import { playCriticalBeep } from './utils/audioAlert';
+import { authorizedFetch } from './utils/authorizedFetch';
 
 type VitalKey = keyof CrewMember['vitals'];
 
@@ -55,6 +94,12 @@ interface TelemetrySnapshotResponse {
   datasets: OsdrDatasetRecord[];
 }
 
+interface OperatorProfile {
+  callsign: string;
+  roleTitle: string;
+  displayName: string;
+}
+
 function formatMet(totalSeconds: number): string {
   const hrs = Math.floor(totalSeconds / 3600);
   const mins = Math.floor((totalSeconds % 3600) / 60);
@@ -62,11 +107,73 @@ function formatMet(totalSeconds: number): string {
   return `T+${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
 
+function sanitizeCallsign(raw: string): string {
+  const cleaned = raw.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 24);
+  return cleaned.length >= 2 ? cleaned : 'FD-01';
+}
+
+function recordToCalibrationInput(rec: MedicalRecordItem) {
+  const { subjectName, subjectRole } = extractSubjectFromSummary(
+    rec.parsedSummary,
+    rec.crewCallsign
+  );
+  const tempMatch = rec.parsedSummary.match(/(?:Core Temp|Temp)\s+(\d{2}(?:\.\d+)?)/i);
+  const radMatch = rec.parsedSummary.match(/(?:Rad Flux|Rad)\s+(\d+(?:\.\d+)?)/i);
+  const hrvMatch = rec.parsedSummary.match(/HRV\s+(\d{1,3}(?:\.\d+)?)/i);
+  const pressMatch = rec.parsedSummary.match(/Press\s+(\d{2,3}(?:\.\d+)?)/i);
+  const co2Match = rec.parsedSummary.match(/ppCO2\s+(\d+(?:\.\d+)?)/i);
+  const o2Match = rec.parsedSummary.match(/O2\s+(\d{2,3}(?:\.\d+)?)/i);
+
+  return {
+    crewCallsign: rec.crewCallsign,
+    subjectName,
+    subjectRole,
+    fileName: rec.fileName,
+    issuer: rec.issuer,
+    recordCategory: rec.recordCategory,
+    clearanceStatus: rec.clearanceStatus,
+    baselineSpo2: rec.baselineSpo2,
+    baselineHr: rec.baselineHr,
+    baselineCoreTemp: tempMatch ? Number(tempMatch[1]) : undefined,
+    baselineRadFlux: radMatch ? Number(radMatch[1]) : undefined,
+    baselineHrv: hrvMatch ? Number(hrvMatch[1]) : undefined,
+    baselineSuitPressure: pressMatch ? Number(pressMatch[1]) : undefined,
+    baselinePpCO2: co2Match ? Number(co2Match[1]) : undefined,
+    baselineO2Reserve: o2Match ? Number(o2Match[1]) : undefined,
+    parsedSummary: rec.parsedSummary,
+  };
+}
+
 export default function App() {
-  const [activeScreen, setActiveScreen] = useState<ScreenId>('flight-deck');
+  // 4-second intro logo animation state prior to login process
+  const [introComplete, setIntroComplete] = useState(false);
+  const handleIntroComplete = useCallback(() => {
+    setIntroComplete(true);
+  }, []);
+
+  // Firebase Authentication & Operator Profile state
+  const [authReady, setAuthReady] = useState(false);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [operatorProfile, setOperatorProfile] = useState<OperatorProfile>({
+    callsign: 'FD-01',
+    roleTitle: 'Flight Director',
+    displayName: 'Flight Operator',
+  });
+  const [operatorActions, setOperatorActions] = useState<OperatorAuditRecord[]>([]);
+  const [medicalRecords, setMedicalRecords] = useState<MedicalRecordItem[]>([]);
+  const [activeMedicalRecordId, setActiveMedicalRecordId] = useState<string | null>(null);
+  const calibratedOnceRef = useRef(false);
+  const pendingRoleRef = useRef<{ role: string; callsign: string }>({
+    role: 'Flight Director',
+    callsign: 'FD-01',
+  });
+
+  // Telemetry HUD state (Med Records is placed first after sign-in)
+  const [activeScreen, setActiveScreen] = useState<ScreenId>('med-records');
   const [provenanceMode, setProvenanceMode] = useState<ProvenanceMode>('OSDR-FLT');
-  const [activeDatasetId, setActiveDatasetId] = useState<string>('OSD-318');
-  const [selectedCrewId, setSelectedCrewId] = useState<string>('eva-01');
+  const [activeDatasetId, setActiveDatasetId] = useState<string>('OSD-542');
+  const [selectedCrewId, setSelectedCrewId] = useState<string>('');
   const [selectedVitalKey, setSelectedVitalKey] = useState<VitalKey>('spo2');
   const [isStreaming, setIsStreaming] = useState<boolean>(true);
   const [showOsdrOverlay, setShowOsdrOverlay] = useState<boolean>(true);
@@ -101,8 +208,9 @@ export default function App() {
   }, []);
 
   const fetchState = useCallback(async () => {
+    if (!auth.currentUser) return;
     try {
-      const res = await fetch('/api/telemetry/state');
+      const res = await authorizedFetch('/api/telemetry/state');
       if (!res.ok) return;
       const snap = (await res.json()) as TelemetrySnapshotResponse;
       applySnapshot(snap);
@@ -112,12 +220,436 @@ export default function App() {
   }, [applySnapshot]);
 
   useEffect(() => {
+    if (!authReady || !currentUser) return;
     void fetchState();
     const poll = window.setInterval(() => {
       void fetchState();
     }, 1200);
     return () => window.clearInterval(poll);
-  }, [fetchState]);
+  }, [authReady, currentUser, fetchState]);
+
+  // Listen to Firebase Auth state & hydrate split public/private operator records
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setCurrentUser(user);
+      setAuthReady(true);
+
+      if (!user) {
+        setOperatorActions([]);
+        setMedicalRecords([]);
+        setActiveMedicalRecordId(null);
+        setSelectedCrewId('');
+        setCrew(INITIAL_CREW);
+        setSectors(INITIAL_SECTORS);
+        setScenarios(CONTINGENCY_SCENARIOS);
+        setLogs(INITIAL_LOGS);
+        setDatasets(OSDR_ARCHIVE_DATASETS);
+        calibratedOnceRef.current = false;
+        setActiveScreen('med-records');
+        return;
+      }
+
+      const publicPath = `users/${user.uid}/public/profile`;
+      const privatePath = `users/${user.uid}/private/info`;
+
+      try {
+        const snap = await getDoc(doc(db, 'users', user.uid, 'public', 'profile'));
+        const safeDisplay = (user.displayName || 'Flight Operator').trim().slice(0, 80) || 'Flight Operator';
+        const safeCallsign = sanitizeCallsign(pendingRoleRef.current.callsign);
+        const safeRole = pendingRoleRef.current.role.trim().slice(0, 64) || 'Flight Director';
+
+        if (snap.exists()) {
+          const data = snap.data();
+          setOperatorProfile({
+            callsign: String(data.callsign || safeCallsign),
+            roleTitle: String(data.roleTitle || safeRole),
+            displayName: String(data.displayName || safeDisplay),
+          });
+        } else {
+          await setDoc(doc(db, 'users', user.uid, 'public', 'profile'), {
+            uid: user.uid,
+            displayName: safeDisplay,
+            callsign: safeCallsign,
+            roleTitle: safeRole,
+            updatedAt: serverTimestamp(),
+          });
+          setOperatorProfile({
+            callsign: safeCallsign,
+            roleTitle: safeRole,
+            displayName: safeDisplay,
+          });
+        }
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, publicPath);
+      }
+
+      if (user.email && user.emailVerified) {
+        try {
+          await setDoc(doc(db, 'users', user.uid, 'private', 'info'), {
+            uid: user.uid,
+            email: user.email.slice(0, 160),
+            clearedAt: serverTimestamp(),
+          });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.WRITE, privatePath);
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Attach Firestore real-time listener ONLY when authenticated
+  useEffect(() => {
+    if (!authReady || !currentUser) return;
+
+    const actionsPath = `users/${currentUser.uid}/telemetryActions`;
+    const q = query(
+      collection(db, 'users', currentUser.uid, 'telemetryActions'),
+      where('ownerUid', '==', currentUser.uid),
+      limit(50)
+    );
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const docsWithTs = snapshot.docs.map((d) => {
+          const data = d.data();
+          const ts = (data.createdAt as { toMillis?: () => number } | undefined)?.toMillis?.() ?? 0;
+          return {
+            ts,
+            item: {
+              id: String(data.id || d.id),
+              callsign: String(data.callsign || operatorProfile.callsign),
+              actionType: String(data.actionType || 'SCENARIO'),
+              targetRef: String(data.targetRef || '-'),
+              metFormatted: String(data.metFormatted || formatMet(metSeconds)),
+              summary: String(data.summary || ''),
+            } satisfies OperatorAuditRecord,
+          };
+        });
+        docsWithTs.sort((a, b) => b.ts - a.ts);
+        setOperatorActions(docsWithTs.slice(0, 25).map((entry) => entry.item));
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, actionsPath);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [authReady, currentUser, operatorProfile.callsign]);
+
+  // Attach Firestore real-time listener for uploaded Medical Records & Certificates
+  useEffect(() => {
+    if (!authReady || !currentUser) return;
+
+    const medPath = `users/${currentUser.uid}/medicalRecords`;
+    const q = query(
+      collection(db, 'users', currentUser.uid, 'medicalRecords'),
+      where('ownerUid', '==', currentUser.uid),
+      limit(50)
+    );
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const docsWithTs = snapshot.docs.map((d) => {
+          const data = d.data();
+          const createdTs = data.createdAt as { toDate?: () => Date; toMillis?: () => number } | undefined;
+          const ts = createdTs?.toMillis?.() ?? 0;
+          const createdLabel = createdTs?.toDate
+            ? createdTs.toDate().toISOString().replace('T', ' ').slice(0, 16) + ' UTC'
+            : 'Just now';
+
+          return {
+            ts,
+            item: {
+              id: String(data.id || d.id),
+              ownerUid: String(data.ownerUid || currentUser.uid),
+              crewCallsign: String(data.crewCallsign || 'SUBJ-01'),
+              recordCategory: (data.recordCategory === 'CERTIFICATE'
+                ? 'CERTIFICATE'
+                : 'MEDICAL_STATS') as MedicalRecordCategory,
+              fileName: String(data.fileName || 'record'),
+              mimeType: String(data.mimeType || 'application/octet-stream'),
+              fileSizeBytes: Number(data.fileSizeBytes || 0),
+              serverFileId: String(data.serverFileId || ''),
+              issuer: String(data.issuer || 'Flight Medical'),
+              clearanceStatus: (data.clearanceStatus || 'CLEARED_EVA') as ClearanceStatus,
+              parsedSummary: String(data.parsedSummary || ''),
+              baselineSpo2: Number(data.baselineSpo2 ?? 98.4),
+              baselineHr: Number(data.baselineHr ?? 72),
+              createdAtLabel: createdLabel,
+            } satisfies MedicalRecordItem,
+          };
+        });
+        docsWithTs.sort((a, b) => b.ts - a.ts);
+        const items = docsWithTs.map((entry) => entry.item);
+        setMedicalRecords(items);
+
+        if (items.length === 0) {
+          setActiveMedicalRecordId(null);
+          setSelectedCrewId('');
+          calibratedOnceRef.current = false;
+          setActiveScreen('med-records');
+          void authorizedFetch('/api/telemetry/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ records: [] }),
+          })
+            .then(async (res) => {
+              if (res.ok) applySnapshot((await res.json()) as TelemetrySnapshotResponse);
+            })
+            .catch(() => {});
+        } else {
+          const syncInputs = items.map(recordToCalibrationInput);
+          const shouldAutoSelect = !calibratedOnceRef.current;
+          calibratedOnceRef.current = true;
+          if (shouldAutoSelect) {
+            setActiveMedicalRecordId(items[0].id);
+          }
+
+          void authorizedFetch('/api/telemetry/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ records: syncInputs }),
+          })
+            .then(async (res) => {
+              if (!res.ok) return;
+              const snap = (await res.json()) as TelemetrySnapshotResponse;
+              applySnapshot(snap);
+              if (shouldAutoSelect && snap.crew[0]) {
+                setSelectedCrewId(snap.crew[0].id);
+              }
+            })
+            .catch(() => {
+              // Next poll reconciles state
+            });
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, medPath);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [authReady, currentUser, applySnapshot]);
+
+  const recordOperatorAction = useCallback(
+    async (
+      actionType: 'SCENARIO' | 'ALERT_ACK' | 'BULKHEAD' | 'PROTOCOL_STEP' | 'PROVENANCE',
+      targetRef: string,
+      summary: string
+    ) => {
+      if (!currentUser || !currentUser.emailVerified) return;
+      const actionId = `act-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const actionPath = `users/${currentUser.uid}/telemetryActions/${actionId}`;
+      try {
+        await setDoc(doc(db, 'users', currentUser.uid, 'telemetryActions', actionId), {
+          id: actionId,
+          ownerUid: currentUser.uid,
+          callsign: sanitizeCallsign(operatorProfile.callsign),
+          actionType,
+          targetRef: targetRef.slice(0, 64),
+          metFormatted: formatMet(metSeconds),
+          summary: summary.slice(0, 240),
+          createdAt: serverTimestamp(),
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, actionPath);
+      }
+    },
+    [currentUser, operatorProfile.callsign, metSeconds]
+  );
+
+  const handleGoogleSignIn = async (selectedRole: string, selectedCallsign: string) => {
+    setAuthError(null);
+    pendingRoleRef.current = {
+      role: selectedRole,
+      callsign: selectedCallsign,
+    };
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : 'Unable to complete Google sign-in popup.';
+      setAuthError(message);
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      if (auth.currentUser) {
+        await authorizedFetch('/api/telemetry/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ records: [] }),
+        }).catch(() => {});
+      }
+      await signOut(auth);
+      setActiveMedicalRecordId(null);
+      calibratedOnceRef.current = false;
+      setActiveScreen('med-records');
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : 'Sign-out failed.');
+    }
+  };
+
+  const calibrateTelemetryFromRecord = useCallback(
+    async (params: {
+      recordId: string;
+      crewCallsign: string;
+      subjectName?: string;
+      subjectRole?: string;
+      fileName: string;
+      issuer?: string;
+      recordCategory?: MedicalRecordCategory;
+      clearanceStatus: ClearanceStatus;
+      baselineSpo2: number;
+      baselineHr: number;
+      baselineCoreTemp?: number;
+      baselineRadFlux?: number;
+      baselineHrv?: number;
+      baselineSuitPressure?: number;
+      baselinePpCO2?: number;
+      baselineO2Reserve?: number;
+      parsedSummary?: string;
+    }) => {
+      try {
+        const res = await authorizedFetch('/api/telemetry/calibrate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(params),
+        });
+        if (res.ok) {
+          const snap = (await res.json()) as TelemetrySnapshotResponse;
+          applySnapshot(snap);
+          const matched = snap.crew.find((c) => c.callsign === params.crewCallsign);
+          if (matched) {
+            setSelectedCrewId(matched.id);
+          }
+          setActiveMedicalRecordId(params.recordId);
+        }
+      } catch {
+        // Next poll reconciles state
+      }
+    },
+    [applySnapshot]
+  );
+
+  const handleUploadMedicalRecord = async (payload: MedicalUploadPayload) => {
+    if (!currentUser || !currentUser.emailVerified) {
+      throw new Error('Verified Google operator clearance is required to persist medical records.');
+    }
+    const recordId = `med-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const recordPath = `users/${currentUser.uid}/medicalRecords/${recordId}`;
+    const safeCallsign = sanitizeCallsign(payload.crewCallsign);
+    const safeSpo2 = Math.max(0, Math.min(100, Number(payload.baselineSpo2) || 98.4));
+    const safeHr = Math.max(0, Math.min(260, Number(payload.baselineHr) || 72));
+    const safeFileName = payload.fileName.trim().slice(0, 160) || 'medical-record';
+    const safeIssuer = payload.issuer.trim().slice(0, 120) || 'Aeromedical Clinic';
+    const safeSummary = payload.parsedSummary.trim().slice(0, 400) || 'Medical report uploaded.';
+
+    try {
+      await setDoc(doc(db, 'users', currentUser.uid, 'medicalRecords', recordId), {
+        id: recordId,
+        ownerUid: currentUser.uid,
+        crewCallsign: safeCallsign,
+        recordCategory: payload.recordCategory,
+        fileName: safeFileName,
+        mimeType: payload.mimeType.trim().slice(0, 100) || 'application/octet-stream',
+        fileSizeBytes: Math.max(0, Math.min(10485760, Math.round(payload.fileSizeBytes))),
+        serverFileId: payload.serverFileId.slice(0, 128),
+        issuer: safeIssuer,
+        clearanceStatus: payload.clearanceStatus,
+        parsedSummary: safeSummary,
+        baselineSpo2: safeSpo2,
+        baselineHr: safeHr,
+        createdAt: serverTimestamp(),
+      });
+
+      calibratedOnceRef.current = true;
+      await calibrateTelemetryFromRecord({
+        recordId,
+        crewCallsign: safeCallsign,
+        subjectName: payload.subjectName,
+        subjectRole: payload.subjectRole,
+        fileName: safeFileName,
+        issuer: safeIssuer,
+        recordCategory: payload.recordCategory,
+        clearanceStatus: payload.clearanceStatus,
+        baselineSpo2: safeSpo2,
+        baselineHr: safeHr,
+        baselineCoreTemp: payload.baselineCoreTemp,
+        baselineRadFlux: payload.baselineRadFlux,
+        baselineHrv: payload.baselineHrv,
+        baselineSuitPressure: payload.baselineSuitPressure,
+        baselinePpCO2: payload.baselinePpCO2,
+        baselineO2Reserve: payload.baselineO2Reserve,
+        parsedSummary: safeSummary,
+      });
+
+      void recordOperatorAction(
+        'PROVENANCE',
+        safeCallsign,
+        `Uploaded ${safeFileName} for ${payload.subjectName} and calibrated Flight Deck, Orbital Matrix, Contingency & Archive.`
+      );
+      setActiveScreen('flight-deck');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, recordPath);
+    }
+  };
+
+  const handleDeleteMedicalRecord = async (record: MedicalRecordItem) => {
+    if (!currentUser || !currentUser.emailVerified) return;
+    const recordPath = `users/${currentUser.uid}/medicalRecords/${record.id}`;
+    try {
+      await deleteDoc(doc(db, 'users', currentUser.uid, 'medicalRecords', record.id));
+      if (record.serverFileId) {
+        void authorizedFetch(`/api/medical/files/${record.serverFileId}`, {
+          method: 'DELETE',
+        });
+      }
+      const remaining = medicalRecords.filter((r) => r.id !== record.id);
+      const res = await authorizedFetch('/api/telemetry/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ records: remaining.map(recordToCalibrationInput) }),
+      });
+      if (res.ok) {
+        const snap = (await res.json()) as TelemetrySnapshotResponse;
+        applySnapshot(snap);
+        if (remaining.length > 0 && snap.crew[0]) {
+          setActiveMedicalRecordId(remaining[0].id);
+          setSelectedCrewId(snap.crew[0].id);
+        } else {
+          setActiveMedicalRecordId(null);
+          setSelectedCrewId('');
+          calibratedOnceRef.current = false;
+          setActiveScreen('med-records');
+        }
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, recordPath);
+    }
+  };
+
+  const handleApplyMedicalBaseline = async (record: MedicalRecordItem) => {
+    const input = recordToCalibrationInput(record);
+    await calibrateTelemetryFromRecord({
+      recordId: record.id,
+      ...input,
+    });
+
+    void recordOperatorAction(
+      'PROVENANCE',
+      record.crewCallsign,
+      `Switched active medical report baseline to ${record.fileName} (${record.clearanceStatus}).`
+    );
+    setActiveScreen('flight-deck');
+  };
 
   const activeScenario = useMemo(
     () => scenarios.find((s) => s.id === activeScenarioId) ?? scenarios[0],
@@ -125,7 +657,7 @@ export default function App() {
   );
 
   const selectedCrew = useMemo(
-    () => crew.find((c) => c.id === selectedCrewId) ?? crew[0],
+    () => crew.find((c) => c.id === selectedCrewId) ?? crew[0] ?? null,
     [crew, selectedCrewId]
   );
 
@@ -142,7 +674,7 @@ export default function App() {
   const handleSelectScenario = useCallback(
     async (id: ContingencyScenarioId) => {
       try {
-        const res = await fetch('/api/contingency/scenario', {
+        const res = await authorizedFetch('/api/contingency/scenario', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ scenarioId: id, crewId: selectedCrewId }),
@@ -153,12 +685,17 @@ export default function App() {
           if (id !== 'nominal-eva' && !isAudioMuted) {
             playCriticalBeep(snap.overallSeverity === 'critical');
           }
+          void recordOperatorAction(
+            'SCENARIO',
+            id,
+            `Switched flight-deck mode to ${id}.`
+          );
         }
       } catch {
         // Ignore transient failure; next poll reconciles state
       }
     },
-    [selectedCrewId, applySnapshot, isAudioMuted]
+    [selectedCrewId, applySnapshot, isAudioMuted, recordOperatorAction]
   );
 
   const handleTriggerContingencyFromHeader = () => {
@@ -174,7 +711,7 @@ export default function App() {
     const next = !isStreaming;
     setIsStreaming(next);
     try {
-      const res = await fetch('/api/telemetry/stream', {
+      const res = await authorizedFetch('/api/telemetry/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ isStreaming: next }),
@@ -192,11 +729,16 @@ export default function App() {
     stepId: string
   ) => {
     try {
-      const res = await fetch(`/api/contingency/steps/${scenarioId}/${stepId}`, {
+      const res = await authorizedFetch(`/api/contingency/steps/${scenarioId}/${stepId}`, {
         method: 'PATCH',
       });
       if (res.ok) {
         applySnapshot((await res.json()) as TelemetrySnapshotResponse);
+        void recordOperatorAction(
+          'PROTOCOL_STEP',
+          stepId,
+          `Toggled verification status for checklist step ${stepId} (${scenarioId}).`
+        );
       }
     } catch {
       // Reconciled on next poll
@@ -205,11 +747,16 @@ export default function App() {
 
   const handleToggleHatch = async (sectorId: string) => {
     try {
-      const res = await fetch(`/api/sectors/${sectorId}/hatch`, {
+      const res = await authorizedFetch(`/api/sectors/${sectorId}/hatch`, {
         method: 'PATCH',
       });
       if (res.ok) {
         applySnapshot((await res.json()) as TelemetrySnapshotResponse);
+        void recordOperatorAction(
+          'BULKHEAD',
+          sectorId,
+          `Toggled bulkhead pressure hatch state on ${sectorId}.`
+        );
       }
     } catch {
       // Reconciled on next poll
@@ -219,13 +766,18 @@ export default function App() {
   const handleAcknowledgeAlert = async () => {
     setAlertAcknowledged(true);
     try {
-      const res = await fetch('/api/contingency/acknowledge', {
+      const res = await authorizedFetch('/api/contingency/acknowledge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ crewId: selectedCrewId }),
       });
       if (res.ok) {
         applySnapshot((await res.json()) as TelemetrySnapshotResponse);
+        void recordOperatorAction(
+          'ALERT_ACK',
+          activeScenario.code,
+          `Acknowledged emergency banner for ${activeScenario.name}.`
+        );
       }
     } catch {
       // Reconciled on next poll
@@ -234,46 +786,94 @@ export default function App() {
 
   const handleSelectProvenanceDataset = async (datasetId: string) => {
     try {
-      const res = await fetch('/api/telemetry/provenance', {
+      const res = await authorizedFetch('/api/telemetry/provenance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provenanceMode: 'OSDR-FLT', activeDatasetId: datasetId }),
       });
       if (res.ok) {
         applySnapshot((await res.json()) as TelemetrySnapshotResponse);
+        void recordOperatorAction(
+          'PROVENANCE',
+          datasetId,
+          `Selected NASA OSDR reference cohort ${datasetId}.`
+        );
       }
     } catch {
       // Reconciled on next poll
     }
   };
 
-  const handleExportCsv = () => {
-    const a = document.createElement('a');
-    a.href = '/api/logs/export.csv';
-    a.download = `orbital-telemetry-${formatMet(metSeconds).replace(/[:+]/g, '-')}.csv`;
-    a.click();
+  const handleExportCsv = async () => {
+    try {
+      const res = await authorizedFetch('/api/logs/export.csv');
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `orbital-telemetry-${formatMet(metSeconds).replace(/[:+]/g, '-')}.csv`;
+      a.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      // Ignore transient export failure
+    }
   };
 
   // Trigger audio pulse periodically when critical & unmuted & unacknowledged
   useEffect(() => {
-    if (overallSeverity === 'nominal' || alertAcknowledged || isAudioMuted) return;
+    if (!currentUser || overallSeverity === 'nominal' || alertAcknowledged || isAudioMuted) return;
     const beepTimer = window.setInterval(() => {
       playCriticalBeep(overallSeverity === 'critical');
     }, 3200);
     return () => window.clearInterval(beepTimer);
-  }, [overallSeverity, alertAcknowledged, isAudioMuted]);
+  }, [currentUser, overallSeverity, alertAcknowledged, isAudioMuted]);
 
-  const selectedMetric: VitalMetric = selectedCrew.vitals[selectedVitalKey];
+  const activeMedicalRecord = useMemo(
+    () =>
+      medicalRecords.find((r) => r.id === activeMedicalRecordId) ??
+      medicalRecords[0] ??
+      null,
+    [medicalRecords, activeMedicalRecordId]
+  );
+
+  if (!introComplete) {
+    return <IntroSplashScreen onComplete={handleIntroComplete} />;
+  }
+
+  if (!authReady || !currentUser) {
+    return (
+      <SignInScreen
+        metFormatted={formatMet(metSeconds)}
+        overallSeverity={overallSeverity}
+        authLoading={!authReady}
+        authError={authError}
+        onGoogleSignIn={handleGoogleSignIn}
+      />
+    );
+  }
+
+  const hasMedicalRecord = medicalRecords.length > 0;
+  const effectiveScreen: ScreenId = hasMedicalRecord ? activeScreen : 'med-records';
+
+  const selectedMetric: VitalMetric | null = selectedCrew
+    ? selectedCrew.vitals[selectedVitalKey]
+    : null;
   const datasetRef =
     provenanceMode === 'OSDR-FLT' ? activeDatasetId : activeScenario.code;
 
   return (
     <div className="min-h-screen bg-[#030712] text-[#dce2f9] hud-grid-bg flex flex-col">
       <TopNav
-        activeScreen={activeScreen}
-        onSelectScreen={setActiveScreen}
+        activeScreen={effectiveScreen}
+        onSelectScreen={(screen) => {
+          if (screen === 'med-records' || hasMedicalRecord) {
+            setActiveScreen(screen);
+          }
+        }}
         overallSeverity={overallSeverity}
         onTriggerContingency={handleTriggerContingencyFromHeader}
+        hasMedicalRecord={hasMedicalRecord}
       />
 
       <EmergencyBanner
@@ -297,6 +897,13 @@ export default function App() {
             <StatusPill severity={overallSeverity} />
             <span className="text-[#475569] hidden sm:inline" aria-hidden="true">/</span>
             <ProvenanceBadge mode={provenanceMode} datasetRef={datasetRef} />
+            <span className="text-[#475569] hidden md:inline" aria-hidden="true">/</span>
+            <span className="hidden md:inline-flex items-center gap-1.5 text-[#dce2f9]">
+              <UserCheck className="h-3.5 w-3.5 text-[#00F0FF]" />
+              <span>
+                {operatorProfile.callsign} ({operatorProfile.displayName})
+              </span>
+            </span>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -354,16 +961,54 @@ export default function App() {
                 </>
               )}
             </button>
+
+            {/* Sign Out */}
+            <button
+              type="button"
+              onClick={() => void handleSignOut()}
+              className="inline-flex min-h-[36px] items-center gap-1.5 rounded border border-[#475569] bg-[#030712] px-3 py-1.5 font-mono text-xs text-[#94A3B8] hover:border-[#FF2A55] hover:text-[#F8FAFC] transition-colors whitespace-nowrap shrink-0"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              <span>Sign Out</span>
+            </button>
           </div>
         </div>
       </div>
 
       {/* Main Screen Content */}
       <main className="mx-auto w-full max-w-[1440px] flex-1 px-4 py-5 pb-10 sm:px-6 lg:px-8">
-        {activeScreen === 'flight-deck' && (
+        {effectiveScreen !== 'med-records' && activeMedicalRecord && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#00F0FF]/30 bg-[#070D1D]/90 px-4 py-2.5 font-mono text-xs">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <FileCheck2 className="h-4 w-4 text-[#00FF66] shrink-0" />
+              <span className="text-[#94A3B8]">REPORT SOURCE:</span>
+              <span className="font-semibold text-[#F8FAFC]">{activeMedicalRecord.fileName}</span>
+              <span className="text-[#475569]">·</span>
+              <span className="text-[#00F0FF] font-semibold">
+                {extractSubjectFromSummary(activeMedicalRecord.parsedSummary, activeMedicalRecord.crewCallsign).subjectName} ({activeMedicalRecord.crewCallsign})
+              </span>
+              <span className="text-[#475569]">·</span>
+              <span className="text-[#00FF66] tabular-nums">
+                SpO2 {activeMedicalRecord.baselineSpo2.toFixed(1)}% / HR {activeMedicalRecord.baselineHr} BPM
+              </span>
+              <span className="rounded border border-[#00F0FF]/30 bg-[#030712] px-2 py-0.5 text-[10px] text-[#dce2f9]">
+                {activeMedicalRecord.clearanceStatus.replace('_', ' ')}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveScreen('med-records')}
+              className="rounded border border-[#00F0FF]/45 bg-[#0B132B] px-3 py-1 text-[11px] font-semibold text-[#00F0FF] hover:bg-[#00F0FF]/15 transition-colors whitespace-nowrap"
+            >
+              Upload / Switch Report
+            </button>
+          </div>
+        )}
+
+        {effectiveScreen === 'flight-deck' && selectedCrew && selectedMetric && (
           <div className="space-y-5">
-            {/* Crew Unit Selector & Suit Envelope Header */}
-            <section aria-label="Crew member telemetry selector" className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {/* Uploaded Subject Card(s) & Report Envelope */}
+            <section aria-label="Uploaded medical subject telemetry selector" className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {crew.map((member) => {
                 const isSelected = member.id === selectedCrew.id;
                 const cardClass =
@@ -383,7 +1028,7 @@ export default function App() {
                     className={`flex flex-col justify-between gap-3 rounded-lg p-4 text-left transition-all ${cardClass}`}
                   >
                     <div className="flex items-start justify-between gap-2 w-full">
-                      <div>
+                      <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="font-mono text-xs font-bold text-[#00F0FF]">
                             {member.callsign}
@@ -392,12 +1037,17 @@ export default function App() {
                             {member.suitId}
                           </span>
                         </div>
-                        <h2 className="font-display text-base font-bold text-[#F8FAFC] mt-0.5">
+                        <h2 className="font-display text-base font-bold text-[#F8FAFC] mt-0.5 truncate">
                           {member.name}
                         </h2>
-                        <p className="text-xs text-[#94A3B8]">
+                        <p className="text-xs text-[#94A3B8] truncate">
                           {member.role} · {member.stationLocation}
                         </p>
+                        {member.medicalReport && (
+                          <p className="font-mono text-[10px] text-[#00F0FF]/85 mt-1 truncate">
+                            Report: {member.medicalReport.fileName} · {member.medicalReport.issuer}
+                          </p>
+                        )}
                       </div>
                       <StatusPill severity={member.status} compact />
                     </div>
@@ -431,7 +1081,7 @@ export default function App() {
               })}
             </section>
 
-            {/* Primary Survival Vitals Grid (4 columns desktop, 2 tablet, 1-2 mobile) */}
+            {/* Primary Survival Vitals Grid */}
             <section aria-label="Primary physiological vitals" className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h1 className="font-display text-lg sm:text-xl font-bold text-[#F8FAFC] tracking-wide">
@@ -485,7 +1135,6 @@ export default function App() {
                 />
               </div>
 
-              {/* Quick Contingency Injector & Survival Actions (4 cols) */}
               <aside className="lg:col-span-4 hud-panel-tier1 rounded-lg p-4 sm:p-5 flex flex-col justify-between gap-4">
                 <div className="space-y-1 border-b border-[#00F0FF]/15 pb-3">
                   <div className="flex items-center justify-between gap-2">
@@ -556,7 +1205,7 @@ export default function App() {
           </div>
         )}
 
-        {activeScreen === 'orbital-matrix' && (
+        {effectiveScreen === 'orbital-matrix' && (
           <OrbitalMatrixScreen
             sectors={sectors}
             crew={crew}
@@ -565,7 +1214,7 @@ export default function App() {
           />
         )}
 
-        {activeScreen === 'contingency' && (
+        {effectiveScreen === 'contingency' && selectedCrew && (
           <ContingencyScreen
             scenarios={scenarios}
             activeScenarioId={activeScenarioId}
@@ -578,13 +1227,26 @@ export default function App() {
           />
         )}
 
-        {activeScreen === 'archive' && (
+        {effectiveScreen === 'archive' && (
           <ArchiveScreen
             datasets={datasets}
             logs={logs}
             onExportCsv={handleExportCsv}
             activeDatasetId={activeDatasetId}
             onSelectDataset={(id) => void handleSelectProvenanceDataset(id)}
+            operatorActions={operatorActions}
+          />
+        )}
+
+        {effectiveScreen === 'med-records' && (
+          <MedicalRecordsScreen
+            operatorDisplayName={operatorProfile.displayName}
+            records={medicalRecords}
+            activeRecordId={activeMedicalRecord?.id ?? null}
+            onUploadRecord={handleUploadMedicalRecord}
+            onDeleteRecord={handleDeleteMedicalRecord}
+            onApplyBaseline={handleApplyMedicalBaseline}
+            onProceedToFlightDeck={() => setActiveScreen('flight-deck')}
           />
         )}
       </main>

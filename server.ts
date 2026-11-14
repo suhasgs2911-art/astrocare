@@ -13,7 +13,7 @@ async function startServer() {
   const port = Number(process.env.PORT) || 3000;
   const isProd = process.env.NODE_ENV === 'production';
 
-  app.use(express.json());
+  app.use(express.json({ limit: '15mb' }));
 
   // Start background 1.2s physiological & habitat simulation engine
   telemetryEngine.start();
